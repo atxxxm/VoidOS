@@ -14,7 +14,7 @@ impl Shell {
 
     // Run a command
     fn run_cmd(&self, command: &str, is_script: bool) -> anyhow::Result<()> {
-        todo!()
+        Ok(())
     }
 
     // Main loop vsh
