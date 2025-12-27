@@ -73,3 +73,280 @@ fn read_first_lines(filename: &str, n: usize) -> std::io::Result<Vec<String>> {
 
     reader.lines().take(n).collect::<Result<Vec<_>, _>>()
 }
+
+
+// Enum for mechanisms
+#[derive(PartialEq, Eq, Clone)]
+pub enum Mechanisms {
+    Pipe,              // |
+    LogicalOr,         // ||
+    LogicalAnd,        // &&
+    RedirectionOut,    // >
+    RedirectionAppend, // >>
+    RedirectionIn,     // <
+    ConsistentExec,    // ;
+    None,
+}
+
+// Token struct
+#[derive(Clone)]
+pub struct Token {
+    pub content: String,
+    pub mechanism: Mechanisms,
+}
+
+pub struct Tokenize {
+    prompt: String,
+}
+
+impl Tokenize {
+    pub fn new(prompt: &str) -> Self {
+        Self {
+            prompt: prompt.to_string(),
+        }
+    }
+
+    // Tokenize command
+    pub fn tokenize(&self) -> Vec<Token> {
+        let mut tokens: Vec<Token> = Vec::new();
+        let ch: Vec<char> = self.prompt.chars().collect();
+        let mut i: usize = 0;
+        let len = ch.len();
+
+        while i < len {
+            let c = ch[i];
+
+            if c == ' ' {
+                i += 1;
+                continue;
+            }
+
+            if i + 1 < len {
+                let two = format!("{}{}", ch[i], ch[i + 1]);
+
+                if two == "||" {
+                    tokens.push(Token { content: "||".to_string(), mechanism: Mechanisms::LogicalOr });
+                    i += 2;
+                    continue;
+                }
+
+                if two == "&&" {
+                    tokens.push(Token { content: "&&".to_string(), mechanism: Mechanisms::LogicalAnd });
+                    i += 2;
+                    continue;
+                }
+
+                if two == ">>" {
+                    tokens.push(Token { content: ">>".to_string(), mechanism: Mechanisms::RedirectionAppend });
+                    i += 2;
+                    continue;
+                }
+                
+            }
+
+            match c {
+                '|' => {
+                    tokens.push(Token { content: "|".to_string(), mechanism: Mechanisms::Pipe });
+                    i += 1;
+                    continue;
+                }
+                '>' => {
+                    tokens.push(Token { content: ">".to_string(), mechanism: Mechanisms::RedirectionOut });
+                    i += 1;
+                    continue;
+                }
+                '<' => {
+                    tokens.push(Token { content: "<".to_string(), mechanism: Mechanisms::RedirectionIn });
+                    i += 1;
+                    continue;
+                }
+                ';' => {
+                    tokens.push(Token { content: ";".to_string(), mechanism: Mechanisms::ConsistentExec });
+                    i += 1;
+                    continue;
+                }
+
+                _ => {}
+            }
+
+            let start = i;
+
+            while i < len && !"|&><;".contains(ch[i]) {
+                if ch[i] == '"' || ch[i] == '\'' {
+                    let quote = ch[i];
+                    i += 1;
+                    while i < len && ch[i] != quote {
+                        i += 1;
+                    }
+                }
+
+                i += 1;
+            }
+
+            let content: String = ch[start..i].iter().collect();
+            tokens.push(Token { content: content.trim().to_string(), mechanism: Mechanisms::None });
+
+        }
+
+        tokens
+    }
+}
+
+// Exec tree
+pub enum ExecNode {
+    Command {
+        program: String,
+        args: Vec<String>,
+        stdin: Option<String>,
+        stdout: Option<String>,
+        append: bool,
+    },
+
+    Pipe {
+        left: Box<ExecNode>,
+        right: Box<ExecNode>,
+    },
+
+    LogicalAnd {
+        left: Box<ExecNode>,
+        right: Box<ExecNode>,
+    },
+
+    LogicalOr {
+        left: Box<ExecNode>,
+        right: Box<ExecNode>,
+    },
+
+    Sequence {
+        left: Box<ExecNode>,
+        right: Box<ExecNode>,
+    }
+}
+
+// Token parse
+pub struct TokenParse {
+    tokens: Vec<Token>,
+}
+
+impl TokenParse {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens }
+    }
+
+    // Parsing by priority hierarchy //
+
+    // Parsing
+    pub fn parse(&self) -> ExecNode {
+        self.parse_sequence(&self.tokens)
+    }
+
+    // Parse ;
+    fn parse_sequence(&self, tokens: &[Token]) -> ExecNode {
+        if let Some(pos) = self.find_last_mech(tokens, Mechanisms::ConsistentExec) {
+            return ExecNode::Sequence {
+                left: Box::new(self.parse_sequence(&tokens[..pos])),
+                right: Box::new(self.parse_sequence(&tokens[pos + 1..])),
+            };
+        }
+
+        self.parse_logical(tokens)
+    }
+
+    // Parse || and &&
+    fn parse_logical(&self, tokens: &[Token]) -> ExecNode {
+        if let Some(pos) = self.find_last_mech(tokens, Mechanisms::LogicalAnd) {
+            return ExecNode::LogicalAnd {
+                left: Box::new(self.parse_logical(&tokens[..pos])),
+                right: Box::new(self.parse_logical(&tokens[pos + 1..])),
+            };
+        }
+
+        if let Some(pos) = self.find_last_mech(tokens, Mechanisms::LogicalOr) {
+            return ExecNode::LogicalOr {
+                left: Box::new(self.parse_logical(&tokens[..pos])),
+                right: Box::new(self.parse_logical(&tokens[pos + 1..])),
+            };
+        }
+
+        self.parse_pipe(tokens)
+    }
+
+
+
+    // Parse |
+    fn parse_pipe(&self, tokens: &[Token]) -> ExecNode {
+        if let Some(pos) = self.find_last_mech(tokens, Mechanisms::Pipe) {
+            return ExecNode::Pipe {
+                left: Box::new(self.parse_pipe(&tokens[..pos])),
+                right: Box::new(self.parse_pipe(&tokens[pos + 1..])),
+            };
+        }
+
+        self.parse_command(tokens)
+    }
+
+    // Collect comnands + redirects
+    fn parse_command(&self, tokens: &[Token]) -> ExecNode {
+        let mut program = String::new();
+        let mut args = Vec::new();
+        let mut stdin = None;
+        let mut stdout = None;
+        let mut append = false;
+
+        let mut i = 0;
+
+        while i < tokens.len() {
+            let t = &tokens[i];
+
+            match t.mechanism {
+                Mechanisms::RedirectionIn => {
+                    stdin = Some(tokens[i + 1].content.clone());
+                    i += 2;
+                }
+                Mechanisms::RedirectionOut => {
+                    stdout = Some(tokens[i + 1].content.clone());
+                    append = false;
+                    i += 2;
+                }
+                Mechanisms::RedirectionAppend => {
+                    stdout = Some(tokens[i + 1].content.clone());
+                    append = true;
+                    i += 2;
+                }
+                Mechanisms::None => {
+                    if program.is_empty() {
+                        let (cmd, a) = split_cmd_and_args(&t.content);
+                        program = cmd;
+                        args.extend(a);
+                    } else {
+                        args.push(t.content.clone());
+                    }
+                    i += 1;
+                }
+
+                _ => panic!("Unexpected operator in parse_command"),
+            }
+        }
+
+        ExecNode::Command {
+            program,
+            args,
+            stdin,
+            stdout,
+            append,
+        }
+    }
+
+    // Low priority operator search
+    fn find_last_mech(&self, tokens: &[Token], mech: Mechanisms) -> Option<usize> {
+        for (i, t) in tokens.iter().enumerate().rev() {
+            if t.mechanism == mech {
+                return Some(i);
+            }
+        }
+
+        None
+    }
+}
+
+
