@@ -49,3 +49,7 @@ path = "bin/rm.rs"
 [[bin]]
 name = "rmdir"
 path = "bin/rmdir.rs"
+
+[[bin]]
+name = "touch"
+path = "bin/touch.rs"
