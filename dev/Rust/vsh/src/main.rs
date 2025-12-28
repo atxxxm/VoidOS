@@ -7,7 +7,9 @@ mod utils;
 
 use anyhow;
 
-fn main() -> anyhow::Result<()> {
+use crate::shell::Shell;
 
+fn main() -> anyhow::Result<()> {
+    Shell::new().run()?;
     Ok(())
 }
