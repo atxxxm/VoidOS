@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
+chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive"] }
+globset = "0.4.18"
+rayon = "1.11.0"
 walkdir = "2.5.0"
 
 [[bin]]
@@ -14,3 +18,7 @@ path = "bin/cat.rs"
 [[bin]]
 name = "cp"
 path = "bin/cp.rs"
+
+[[bin]]
+name = "find"
+path = "bin/find.rs"
