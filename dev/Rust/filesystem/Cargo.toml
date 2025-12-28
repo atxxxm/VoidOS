@@ -7,8 +7,10 @@ edition = "2024"
 anyhow = "1.0.100"
 chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive"] }
+colored = "3.0.0"
 globset = "0.4.18"
 rayon = "1.11.0"
+regex = "1.12.2"
 walkdir = "2.5.0"
 
 [[bin]]
@@ -22,3 +24,7 @@ path = "bin/cp.rs"
 [[bin]]
 name = "find"
 path = "bin/find.rs"
+
+[[bin]]
+name = "grep"
+path = "bin/grep.rs"
