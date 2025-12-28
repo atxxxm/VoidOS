@@ -12,9 +12,23 @@
 #include <errno.h>
 #include <stdarg.h>
 
+#define DEMON_CONTROLLER_PATH "/sbin/demon-controller"
+
 // Start demons
 void start_demons() {
+    pid_t pid = fork();
 
+    if (pid == 0) {
+        execl(DEMON_CONTROLLER_PATH, "demon-controller", NULL);
+        perror("Failed to start demon-controller");
+        _exit(1);
+    }
+    else if (pid > 0) {
+        printf("[init] Started demon-controller (pid=%d)\n", (int)pid);
+    }
+    else {
+        perror("Failed to fork");
+    }
 }
 
 int create_dir(const char *path);
