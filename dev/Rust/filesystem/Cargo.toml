@@ -33,3 +33,7 @@ path = "bin/grep.rs"
 [[bin]]
 name = "ls"
 path = "bin/ls.rs"
+
+[[bin]]
+name = "mkdir"
+path = "bin/mkdir.rs"
