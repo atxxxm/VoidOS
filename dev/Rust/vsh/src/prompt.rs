@@ -42,7 +42,7 @@ impl Prompt {
     }
 
     // Default prompt
-    fn default(&mut self) {
+    pub fn default(&mut self) {
         self.prompt.clear();
         self.cursor_pos = 0;
     }
@@ -203,12 +203,10 @@ impl Prompt {
         (start, end, word)
     }
 
-
     // Replace range in prompt
     fn replace_range(&mut self, start: usize, end: usize, new: &str) {
         self.prompt.replace_range(start..end, new);
     }
-
 
     // Get common prefix
     fn common_prefix(&self, list: &Vec<String>) -> String {

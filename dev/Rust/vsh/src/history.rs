@@ -54,6 +54,7 @@ impl History {
         return String::new();
     }
 
+    // Reset history index
     pub fn zero_index(&mut self) {
         self.history_index = None;
     }
