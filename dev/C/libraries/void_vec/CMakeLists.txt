@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
-project(VVec)
+project(VoidVec)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
 
 add_library(void_vec STATIC void_vec.c)
 
