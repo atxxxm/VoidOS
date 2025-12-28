@@ -30,6 +30,7 @@ impl Prompt {
     pub fn add(&mut self, ch: char) {
         let byte_idx = self.get_byte_idx();
         self.prompt.insert(byte_idx, ch);  
+        self.cursor_pos += 1;
     }
 
     // Delete char from prompt

@@ -1,5 +1,8 @@
-
-use std::{fs::{File, OpenOptions}, io::Write, process::{Command, Stdio}};
+use std::{
+    fs::{File, OpenOptions},
+    io::Write,
+    process::{Command, Stdio},
+};
 
 use crate::utils::{ExecNode, Token, TokenParse, Tokenize, get_current_path};
 use anyhow;
@@ -11,7 +14,10 @@ pub struct Executor {
 
 impl Executor {
     pub fn new(prompt: &str) -> Self {
-        Self { prompt: prompt.to_string(), tokens: Vec::new() }
+        Self {
+            prompt: prompt.to_string(),
+            tokens: Vec::new(),
+        }
     }
 
     // Run command
@@ -36,7 +42,13 @@ impl Executor {
     // Execute AST
     pub fn execute(&self, node: &ExecNode) -> anyhow::Result<i32> {
         match node {
-            ExecNode::Command { program, args, stdin, stdout, append } => {
+            ExecNode::Command {
+                program,
+                args,
+                stdin,
+                stdout,
+                append,
+            } => {
                 return Ok(self.exec_command(program, args, stdin, stdout, *append)?);
             }
             ExecNode::Pipe { left, right } => {
@@ -68,7 +80,7 @@ impl Executor {
     // Execute pipe
     fn exec_pipe(&self, left: &ExecNode, right: &ExecNode) -> anyhow::Result<i32> {
         let mut left_cmd = match left {
-            ExecNode::Command { program, args, ..} => {
+            ExecNode::Command { program, args, .. } => {
                 let mut c = Command::new(program);
                 c.args(args);
                 c.stdout(Stdio::piped());
@@ -81,7 +93,7 @@ impl Executor {
         let left_out = left_cmd.stdout.take().unwrap();
 
         let mut right_cmd = match right {
-            ExecNode::Command { program, args, ..} => {
+            ExecNode::Command { program, args, .. } => {
                 let mut c = Command::new(program);
                 c.args(args);
                 c.stdin(left_out);
@@ -92,11 +104,11 @@ impl Executor {
         };
 
         left_cmd.wait()?;
-        let status =  right_cmd.wait()?;
+        let status = right_cmd.wait()?;
         Ok(status.code().unwrap_or(1))
     }
 
-    // Execute command 
+    // Execute command
     fn exec_command(
         &self,
         program: &str,
@@ -105,9 +117,8 @@ impl Executor {
         stdout: &Option<String>,
         append: bool,
     ) -> anyhow::Result<i32> {
-
         if program == "cd" || program == "pwd" || program == "echo" || program == "clear" {
-            return (Ok(self.exec_builtin(program, args, stdout, append)));
+            return Ok(self.exec_builtin(program, args, stdout, append));
         }
 
         let mut cmd = Command::new(program);
@@ -125,7 +136,11 @@ impl Executor {
             let f = if append {
                 OpenOptions::new().append(true).create(true).open(file)
             } else {
-                OpenOptions::new().write(true).create(true).truncate(true).open(file)
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(file)
             };
 
             if let Ok(f) = f {
@@ -150,8 +165,13 @@ impl Executor {
             let f = if append {
                 OpenOptions::new().append(true).create(true).open(file)
             } else {
-                OpenOptions::new().write(true).create(true).truncate(true).open(file)
-            }.expect("cannot open file for redirect");
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(file)
+            }
+            .expect("cannot open file for redirect");
 
             Box::new(f)
         } else {
@@ -181,6 +201,4 @@ impl Executor {
 
         0
     }
-    
 }
-

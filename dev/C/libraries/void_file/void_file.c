@@ -5,7 +5,6 @@
 #include <stdarg.h>
 
 
-
 VFile* VFile_open(const char* path, const char* mode) {
     // Open the file
     FILE* fp = fopen(path, mode);
