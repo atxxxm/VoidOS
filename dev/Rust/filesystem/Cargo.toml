@@ -45,3 +45,7 @@ path = "bin/mv.rs"
 [[bin]]
 name = "rm"
 path = "bin/rm.rs"
+
+[[bin]]
+name = "rmdir"
+path = "bin/rmdir.rs"
