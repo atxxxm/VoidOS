@@ -37,3 +37,7 @@ path = "bin/ls.rs"
 [[bin]]
 name = "mkdir"
 path = "bin/mkdir.rs"
+
+[[bin]]
+name = "mv"
+path = "bin/mv.rs"
