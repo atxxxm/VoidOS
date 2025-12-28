@@ -1,8 +1,8 @@
 # Display file contents  
-catfile data.txt
+cat data.txt
 
 # Display file contents in reverse order (by lines)  
-catfile -r data.txt
+cat -r data.txt
 
 # Display file contents in reverse order (by lines), using the long option  
-catfile --reverse data.txt
+cat --reverse data.txt
