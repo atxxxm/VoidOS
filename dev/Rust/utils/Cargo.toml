@@ -7,9 +7,14 @@ edition = "2024"
 anyhow = "1.0.100"
 argon2 = { version = "0.5.3", features = ["std", "password-hash"] }
 clap = { version = "4.5.53", features = ["derive"] }
+colored = "3.0.0"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.10"
 
 [[bin]]
 name = "usereg"
 path = "bin/usereg.rs"
+
+[[bin]]
+name = "void"
+path = "bin/void.rs"
