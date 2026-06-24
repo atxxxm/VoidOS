@@ -46,8 +46,14 @@ impl Executor {
                 stdin,
                 stdout,
                 append,
+                stderr,
+                err_append,
+                stderr_to_stdout,
             } => {
-                return Ok(self.exec_command(program, args, stdin, stdout, *append)?);
+                return Ok(self.exec_command(
+                    program, args, stdin, stdout, *append,
+                    stderr, *err_append, *stderr_to_stdout,
+                )?);
             }
             ExecNode::Pipe { left, right } => {
                 return self.exec_pipe(left, right);
@@ -116,11 +122,15 @@ impl Executor {
         stdin: &Option<String>,
         stdout: &Option<String>,
         append: bool,
+        stderr: &Option<String>,
+        err_append: bool,
+        stderr_to_stdout: bool,
     ) -> anyhow::Result<i32> {
         let program = expand(program, self.last_exit);
         let args: Vec<String> = args.iter().map(|a| expand(a, self.last_exit)).collect();
         let stdin: Option<String> = stdin.as_ref().map(|s| expand(s, self.last_exit));
         let stdout: Option<String> = stdout.as_ref().map(|s| expand(s, self.last_exit));
+        let stderr: Option<String> = stderr.as_ref().map(|s| expand(s, self.last_exit));
 
         // Variable assignment: NAME=value (no command after it)
         if args.is_empty() {
@@ -157,6 +167,31 @@ impl Executor {
             };
             if let Ok(f) = f {
                 cmd.stdout(Stdio::from(f));
+            }
+        }
+
+        // stderr redirect: 2>file / 2>>file / 2>&1
+        if stderr_to_stdout {
+            // Redirect stderr to the same destination as stdout
+            if let Some(ref out_file) = stdout {
+                let f = if append {
+                    OpenOptions::new().append(true).create(true).open(out_file)
+                } else {
+                    OpenOptions::new().write(true).create(true).truncate(true).open(out_file)
+                };
+                if let Ok(f) = f {
+                    cmd.stderr(Stdio::from(f));
+                }
+            }
+            // if stdout is not redirected, stderr naturally goes to the terminal
+        } else if let Some(ref err_file) = stderr {
+            let f = if err_append {
+                OpenOptions::new().append(true).create(true).open(err_file)
+            } else {
+                OpenOptions::new().write(true).create(true).truncate(true).open(err_file)
+            };
+            if let Ok(f) = f {
+                cmd.stderr(Stdio::from(f));
             }
         }
 

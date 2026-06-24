@@ -132,6 +132,9 @@ pub enum Mechanisms {
     RedirectionAppend, // >>
     RedirectionIn,     // <
     ConsistentExec,    // ;
+    RedirectionErrOut,    // 2>
+    RedirectionErrAppend, // 2>>
+    RedirectionErrToOut,  // 2>&1
     None,
 }
 
@@ -216,17 +219,35 @@ impl Tokenize {
                 _ => {}
             }
 
+            // Fd redirect: 2>, 2>>, 2>&1
+            if c == '2' && i + 1 < len && ch[i + 1] == '>' {
+                if i + 3 < len && ch[i + 2] == '&' && ch[i + 3] == '1' {
+                    tokens.push(Token { content: "2>&1".into(), mechanism: Mechanisms::RedirectionErrToOut });
+                    i += 4;
+                } else if i + 2 < len && ch[i + 2] == '>' {
+                    tokens.push(Token { content: "2>>".into(), mechanism: Mechanisms::RedirectionErrAppend });
+                    i += 3;
+                } else {
+                    tokens.push(Token { content: "2>".into(), mechanism: Mechanisms::RedirectionErrOut });
+                    i += 2;
+                }
+                continue;
+            }
+
             let start = i;
 
-            while i < len && !"|&><;".contains(ch[i]) {
-                if ch[i] == '"' || ch[i] == '\'' {
-                    let quote = ch[i];
+            while i < len {
+                let wc = ch[i];
+                if "|&><;".contains(wc) { break; }
+                // Stop before a fd redirect so it becomes its own token
+                if wc == '2' && i + 1 < len && ch[i + 1] == '>' { break; }
+                if wc == '"' || wc == '\'' {
+                    let quote = wc;
                     i += 1;
                     while i < len && ch[i] != quote {
                         i += 1;
                     }
                 }
-
                 i += 1;
             }
 
@@ -247,6 +268,9 @@ pub enum ExecNode {
         stdin: Option<String>,
         stdout: Option<String>,
         append: bool,
+        stderr: Option<String>,
+        err_append: bool,
+        stderr_to_stdout: bool,
     },
 
     Pipe {
@@ -339,6 +363,9 @@ impl TokenParse {
         let mut stdin = None;
         let mut stdout = None;
         let mut append = false;
+        let mut stderr = None;
+        let mut err_append = false;
+        let mut stderr_to_stdout = false;
 
         let mut i = 0;
 
@@ -359,6 +386,20 @@ impl TokenParse {
                     stdout = Some(tokens[i + 1].content.clone());
                     append = true;
                     i += 2;
+                }
+                Mechanisms::RedirectionErrOut => {
+                    stderr = Some(tokens[i + 1].content.clone());
+                    err_append = false;
+                    i += 2;
+                }
+                Mechanisms::RedirectionErrAppend => {
+                    stderr = Some(tokens[i + 1].content.clone());
+                    err_append = true;
+                    i += 2;
+                }
+                Mechanisms::RedirectionErrToOut => {
+                    stderr_to_stdout = true;
+                    i += 1;
                 }
                 Mechanisms::None => {
                     if program.is_empty() {
@@ -381,6 +422,9 @@ impl TokenParse {
             stdin,
             stdout,
             append,
+            stderr,
+            err_append,
+            stderr_to_stdout,
         }
     }
 
