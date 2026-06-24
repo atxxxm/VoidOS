@@ -1,0 +1,12 @@
+[package]
+name = "demon-controller"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "demon-controller"
+path = "src/main.rs"
+
+[dependencies]
+nix = { version = "0.29", features = ["signal"] }
+libc = "0.2"
