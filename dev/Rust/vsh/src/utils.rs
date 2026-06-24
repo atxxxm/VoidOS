@@ -27,14 +27,9 @@ pub fn get_current_username() -> anyhow::Result<String> {
 
 // Split command and arguments
 pub fn split_cmd_and_args(cmd: &str) -> (String, Vec<String>) {
-    let split_t: Vec<&str> = cmd.split_whitespace().collect();
-    let cmd = split_t[0].to_string();
-    let mut args: Vec<String> = Vec::new();
-
-    for i in 1..split_t.len() {
-        args.push(split_t[i].to_string());
-    }
-
+    let mut parts = cmd.split_whitespace();
+    let cmd = parts.next().unwrap_or("").to_string();
+    let args = parts.map(|s| s.to_string()).collect();
     (cmd, args)
 }
 

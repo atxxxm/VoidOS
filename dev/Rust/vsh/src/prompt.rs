@@ -65,7 +65,7 @@ impl Prompt {
 
     // Cursor right
     pub fn cursor_right(&mut self) {
-        if self.cursor_pos < self.prompt.len() {
+        if self.cursor_pos < self.prompt.chars().count() {
             self.cursor_pos += 1;
         }
     }
@@ -77,7 +77,7 @@ impl Prompt {
 
     // Cursor end
     pub fn cursor_end(&mut self) {
-        self.cursor_pos = self.prompt.len();
+        self.cursor_pos = self.prompt.chars().count();
     }
 
     // Output //
@@ -132,15 +132,15 @@ impl Prompt {
 
         if storage.len() == 1 {
             self.replace_range(start, end, &storage[0]);
-            self.cursor_pos = start + storage[0].len();
+            self.cursor_pos = start + storage[0].chars().count();
             return Ok(());
         }
 
         let prefix = self.common_prefix(&storage);
 
-        if prefix.len() > target.len() {
+        if prefix.chars().count() > target.chars().count() {
             self.replace_range(start, end, &prefix);
-            self.cursor_pos = start + prefix.len();
+            self.cursor_pos = start + prefix.chars().count();
             return Ok(());
         }
 
@@ -168,15 +168,18 @@ impl Prompt {
 
     // View files in the PATH
     fn check_path_file(&self, target: &str) -> anyhow::Result<Vec<String>> {
-        let path = std::env::var("PATH")?;
+        let path = std::env::var("PATH").unwrap_or_default();
 
         let mut bin_vec: Vec<String> = Vec::new();
 
         for dir in path.split(':') {
-            for entry in fs::read_dir(dir)? {
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries {
                 let entry = entry?;
                 let filename = entry.file_name().display().to_string();
-
                 if filename.starts_with(target) {
                     bin_vec.push(filename);
                 }
@@ -204,9 +207,11 @@ impl Prompt {
         (start, end, word)
     }
 
-    // Replace range in prompt
+    // Replace range in prompt (start/end are char indices)
     fn replace_range(&mut self, start: usize, end: usize, new: &str) {
-        self.prompt.replace_range(start..end, new);
+        let byte_start = self.prompt.char_indices().nth(start).map(|(i, _)| i).unwrap_or(self.prompt.len());
+        let byte_end = self.prompt.char_indices().nth(end).map(|(i, _)| i).unwrap_or(self.prompt.len());
+        self.prompt.replace_range(byte_start..byte_end, new);
     }
 
     // Get common prefix

@@ -1,7 +1,7 @@
 // Main functionality of the shell
 
 use anyhow;
-use crossterm::{event::{self, Event, KeyCode}, terminal};
+use crossterm::{event::{self, Event, KeyCode, KeyModifiers}, terminal};
 
 use crate::{executor::Executor, history::History, prompt::Prompt, script::Script, utils::{get_current_username, is_script}};
 
@@ -18,26 +18,21 @@ impl Shell {
     // Run a command
     fn run_cmd(&self, command: &str, is_script: bool) -> anyhow::Result<()> {
         terminal::disable_raw_mode()?;
-        if is_script {
-            let commands = Script::new(command).get_vsh_command()?;
-
-            for cmd in commands {
-                if cmd.trim().is_empty() {
-                    continue;
-                }
-
-                let mut exec = Executor::new(&cmd);
-                exec.run()?;
-            }
-
-            return Ok(());
-        }
-
-        let mut exec = Executor::new(command);
-        exec.run()?;
-
+        let result = self.run_cmd_inner(command, is_script);
         terminal::enable_raw_mode()?;
+        result
+    }
 
+    fn run_cmd_inner(&self, command: &str, is_script: bool) -> anyhow::Result<()> {
+        if is_script {
+            for cmd in Script::new(command).get_vsh_command()? {
+                if !cmd.trim().is_empty() {
+                    Executor::new(&cmd).run()?;
+                }
+            }
+        } else {
+            Executor::new(command).run()?;
+        }
         Ok(())
     }
 
@@ -57,6 +52,20 @@ impl Shell {
             loop {
                 if let Event::Key(key) = event::read()? {
                     match key.code {
+                        KeyCode::Char(ch) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            match ch {
+                                'c' => {
+                                    print!("^C\r\n");
+                                    history.zero_index();
+                                    prompt.default();
+                                }
+                                'd' if prompt.prompt.is_empty() => {
+                                    terminal::disable_raw_mode()?;
+                                    return Ok(());
+                                }
+                                _ => {}
+                            }
+                        }
                         KeyCode::Char(ch) => prompt.add(ch),
                         KeyCode::Backspace => prompt.delete(),
                         KeyCode::Home => prompt.cursor_start(),
@@ -66,12 +75,12 @@ impl Shell {
                         KeyCode::Up => {
                             history.previous_command();
                             prompt.prompt = history.get_command();
-                            prompt.cursor_pos = prompt.prompt.len();
+                            prompt.cursor_end();
                         }
                         KeyCode::Down => {
                             history.next_command();
                             prompt.prompt = history.get_command();
-                            prompt.cursor_pos = prompt.prompt.len();
+                            prompt.cursor_end();
                         }
                         KeyCode::Tab => prompt.autocomplete()?,
                         KeyCode::Enter => {

@@ -117,7 +117,7 @@ impl Executor {
         stdout: &Option<String>,
         append: bool,
     ) -> anyhow::Result<i32> {
-        if program == "cd" || program == "pwd" || program == "echo" || program == "clear" {
+        if program == "cd" || program == "pwd" || program == "echo" || program == "clear" || program == "exit" {
             return Ok(self.exec_builtin(program, args, stdout, append));
         }
 
@@ -148,9 +148,17 @@ impl Executor {
             }
         }
 
-        let status = cmd.status();
-
-        Ok(status.map(|s| s.code().unwrap_or(1)).unwrap_or(1))
+        match cmd.status() {
+            Ok(s) => Ok(s.code().unwrap_or(1)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("vsh: {program}: command not found");
+                Ok(127)
+            }
+            Err(e) => {
+                eprintln!("vsh: {program}: {e}");
+                Ok(1)
+            }
+        }
     }
 
     // Exec builtin commands
@@ -195,6 +203,10 @@ impl Executor {
             }
             "clear" => {
                 writeln!(ouput, "\x1B[2J\x1B[H").unwrap();
+            }
+            "exit" => {
+                let code = args.first().and_then(|a| a.parse::<i32>().ok()).unwrap_or(0);
+                std::process::exit(code);
             }
             _ => {}
         }

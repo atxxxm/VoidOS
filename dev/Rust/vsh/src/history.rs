@@ -42,7 +42,14 @@ impl History {
 
     // Add command to history
     pub fn add_command(&mut self, command: &str) {
-        self.history_array.push(command.to_string());
+        let cmd = command.trim().to_string();
+        if cmd.is_empty() {
+            return;
+        }
+        if self.history_array.last() == Some(&cmd) {
+            return;
+        }
+        self.history_array.push(cmd);
     }
 
     // Get command from history
