@@ -5,14 +5,16 @@ use crossterm::{event::{self, Event, KeyCode, KeyModifiers}, terminal};
 
 use crate::{executor::Executor, history::History, prompt::Prompt, script::Script, utils::{get_current_username, is_script}};
 
+
 pub struct Shell {
     last_exit: i32,
+    history: History,
 }
 
 impl Shell {
     pub fn new() -> Self {
         unsafe { std::env::set_var("PATH", "/bin:/sbin"); }
-        Self { last_exit: 0 }
+        Self { last_exit: 0, history: History::new() }
     }
 
     // Run a command
@@ -27,6 +29,16 @@ impl Shell {
     }
 
     fn run_cmd_inner(&mut self, command: &str, is_script: bool) -> anyhow::Result<i32> {
+        let trimmed = command.trim();
+
+        // history builtin: print numbered history list
+        if trimmed == "history" {
+            for (i, entry) in self.history.all().iter().enumerate() {
+                println!("{:>4}  {}", i + 1, entry);
+            }
+            return Ok(0);
+        }
+
         if is_script {
             let mut last = 0i32;
             for cmd in Script::new(command).get_vsh_command()? {
@@ -48,8 +60,6 @@ impl Shell {
         let stdout = std::io::stdout();
         let mut prompt = Prompt::new(username, stdout, '|');
 
-        let mut history = History::new();
-
         loop {
             prompt.default();
             prompt.print()?;
@@ -61,7 +71,7 @@ impl Shell {
                             match ch {
                                 'c' => {
                                     print!("^C\r\n");
-                                    history.zero_index();
+                                    self.history.zero_index();
                                     prompt.default();
                                 }
                                 'd' if prompt.prompt.is_empty() => {
@@ -78,20 +88,20 @@ impl Shell {
                         KeyCode::Left => prompt.cursor_left(),
                         KeyCode::Right => prompt.cursor_right(),
                         KeyCode::Up => {
-                            history.previous_command();
-                            prompt.prompt = history.get_command();
+                            self.history.previous_command();
+                            prompt.prompt = self.history.get_command();
                             prompt.cursor_end();
                         }
                         KeyCode::Down => {
-                            history.next_command();
-                            prompt.prompt = history.get_command();
+                            self.history.next_command();
+                            prompt.prompt = self.history.get_command();
                             prompt.cursor_end();
                         }
                         KeyCode::Tab => prompt.autocomplete()?,
                         KeyCode::Enter => {
                             print!("\r\n");
-                            history.add_command(&prompt.prompt);
-                            history.zero_index();
+                            self.history.add_command(&prompt.prompt);
+                            self.history.zero_index();
                             let is_script = is_script(&prompt.prompt)?;
                             self.run_cmd(&prompt.prompt, is_script)?;
                             break;
