@@ -1,7 +1,5 @@
-use nix::{
-    sys::signal::{self, SigHandler, Signal},
-    sys::stat::{chmod, Mode},
-};
+use nix::sys::signal::{self, SigHandler, Signal};
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     io::{self, Write},
@@ -36,7 +34,7 @@ fn main() {
     fs::remove_file(SOCKET_PATH).ok();
 
     let sock = UnixDatagram::bind(SOCKET_PATH).expect("syslogd: failed to bind socket");
-    chmod(SOCKET_PATH, Mode::from_bits_truncate(0o666)).ok();
+    std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o666)).ok();
     sock.set_read_timeout(Some(Duration::from_secs(1))).ok();
 
     println!("syslogd started, listening on {SOCKET_PATH}");

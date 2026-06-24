@@ -33,9 +33,10 @@ fn matches_field(value: u32, field: &str) -> bool {
 fn parse_crontab(path: &str) -> Vec<Job> {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("crond: cannot open {path}: {e}");
-            std::process::exit(1);
+        Err(_) => {
+            // No crontab is not an error: idle with an empty job list
+            eprintln!("crond: no {path}, running with no jobs");
+            return Vec::new();
         }
     };
 

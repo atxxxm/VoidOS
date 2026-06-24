@@ -5,6 +5,21 @@ use nix::{
 };
 use std::{ffi::CString, fs, thread, time::Duration};
 
+fn setup_console() {
+    unsafe {
+        let path = b"/dev/console\0".as_ptr() as *const libc::c_char;
+        let fd = libc::open(path, libc::O_RDWR);
+        if fd >= 0 {
+            libc::dup2(fd, 0);
+            libc::dup2(fd, 1);
+            libc::dup2(fd, 2);
+            if fd > 2 {
+                libc::close(fd);
+            }
+        }
+    }
+}
+
 const DEMON_CONTROLLER: &str = "/sbin/demon-controller";
 const VSH: &str = "/bin/vsh";
 
@@ -57,14 +72,18 @@ fn reap_orphans() {
 }
 
 fn main() {
-    println!("VoidOS init starting...");
-
     do_mount("proc", "/proc", "proc");
     do_mount("sysfs", "/sys", "sysfs");
     do_mount("tmpfs", "/tmp", "tmpfs");
     do_mount("devtmpfs", "/dev", "devtmpfs");
 
-    unsafe { std::env::set_var("PATH", "/bin:/sbin") };
+    // Reopen stdin/stdout/stderr to /dev/console after devtmpfs is mounted
+    setup_console();
+
+    unsafe {
+        std::env::set_var("PATH", "/bin:/sbin");
+        std::env::set_var("TERM", "linux");
+    }
     fs::create_dir_all("/home").ok();
 
     println!("Initialization complete. Starting shell...");
