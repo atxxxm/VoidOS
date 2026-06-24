@@ -33,6 +33,58 @@ pub fn split_cmd_and_args(cmd: &str) -> (String, Vec<String>) {
     (cmd, args)
 }
 
+// Expand variables, ~ and special params in a single word.
+// Single-quoted sections are passed through literally (no expansion).
+// Double-quoted sections are expanded but treated as one word.
+// Both quote types are stripped from the result.
+pub fn expand(s: &str, last_exit: i32) -> String {
+    // Tilde expansion: ~ or ~/... at the start of the word
+    let s: std::borrow::Cow<str> = if s == "~" || s.starts_with("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        format!("{}{}", home, &s[1..]).into()
+    } else {
+        s.into()
+    };
+
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => { in_single = !in_single; }
+            '"'  if !in_single => { in_double = !in_double; }
+            '$'  if !in_single => match chars.peek().copied() {
+                Some('?') => { chars.next(); result.push_str(&last_exit.to_string()); }
+                Some('$') => { chars.next(); result.push_str(&std::process::id().to_string()); }
+                Some('{') => {
+                    chars.next();
+                    let mut name = String::new();
+                    for c in chars.by_ref() {
+                        if c == '}' { break; }
+                        name.push(c);
+                    }
+                    result.push_str(&std::env::var(&name).unwrap_or_default());
+                }
+                Some(c) if c.is_alphabetic() || c == '_' => {
+                    let mut name = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if !c.is_alphanumeric() && c != '_' { break; }
+                        name.push(c);
+                        chars.next();
+                    }
+                    result.push_str(&std::env::var(&name).unwrap_or_default());
+                }
+                _ => result.push('$'),
+            },
+            _ => result.push(ch),
+        }
+    }
+
+    result
+}
+
 // Get current path
 pub fn get_current_path() -> String {
     let mut current_path = String::new();

@@ -5,39 +5,44 @@ use crossterm::{event::{self, Event, KeyCode, KeyModifiers}, terminal};
 
 use crate::{executor::Executor, history::History, prompt::Prompt, script::Script, utils::{get_current_username, is_script}};
 
-pub struct Shell;
+pub struct Shell {
+    last_exit: i32,
+}
 
 impl Shell {
     pub fn new() -> Self {
-        // set PATH
         unsafe { std::env::set_var("PATH", "/bin:/sbin"); }
-
-        Self
+        Self { last_exit: 0 }
     }
 
     // Run a command
-    fn run_cmd(&self, command: &str, is_script: bool) -> anyhow::Result<()> {
+    fn run_cmd(&mut self, command: &str, is_script: bool) -> anyhow::Result<()> {
         terminal::disable_raw_mode()?;
         let result = self.run_cmd_inner(command, is_script);
         terminal::enable_raw_mode()?;
-        result
+        match result {
+            Ok(code) => { self.last_exit = code; Ok(()) }
+            Err(e) => Err(e),
+        }
     }
 
-    fn run_cmd_inner(&self, command: &str, is_script: bool) -> anyhow::Result<()> {
+    fn run_cmd_inner(&mut self, command: &str, is_script: bool) -> anyhow::Result<i32> {
         if is_script {
+            let mut last = 0i32;
             for cmd in Script::new(command).get_vsh_command()? {
                 if !cmd.trim().is_empty() {
-                    Executor::new(&cmd).run()?;
+                    last = Executor::new(&cmd, self.last_exit).run()?;
+                    self.last_exit = last;
                 }
             }
+            Ok(last)
         } else {
-            Executor::new(command).run()?;
+            Ok(Executor::new(command, self.last_exit).run()?)
         }
-        Ok(())
     }
 
     // Main loop vsh
-    pub fn run(&self) -> anyhow::Result<()> {
+    pub fn run(&mut self) -> anyhow::Result<()> {
         terminal::enable_raw_mode()?;
         let username = get_current_username()?;
         let stdout = std::io::stdout();
