@@ -25,6 +25,7 @@ const INIT_PATH: &str = "../dev/Rust/init";
 const DEMON_CONTROLLER_PATH: &str = "../dev/Rust/demon-controller";
 const DEMONS_PATH: &str = "../dev/Rust/demons";
 const VSH_PATH: &str = "../dev/Rust/vsh";
+const BIT_PATH: &str = "../dev/Rust/bit";
 const FILESYSTEM_PATH: &str = "../dev/Rust/filesystem";
 const UTILS_PATH: &str = "../dev/Rust/utils";
 const ROOTFS_REL_PATH: &str = "../os/rootfs";
@@ -165,6 +166,11 @@ fn main() -> std::io::Result<()> {
     let vsh_path = base.join(VSH_PATH);
     build_crate(&vsh_path);
     copy_bin(&release_bin(&vsh_path, "vsh"), &rootfs.join("bin/vsh"))?;
+
+    // bit (ratatui text editor)
+    let bit_path = base.join(BIT_PATH);
+    build_crate(&bit_path);
+    copy_bin(&release_bin(&bit_path, "bit"), &rootfs.join("bin/bit"))?;
 
     // filesystem tools (cat, cp, find, grep, ls, mkdir, mv, rm, rmdir, touch)
     let fs_path = base.join(FILESYSTEM_PATH);
