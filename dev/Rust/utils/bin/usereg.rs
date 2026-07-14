@@ -27,14 +27,9 @@ struct Args {
 enum Commands {
     /// Create a new user
     New {
-
         /// Username
         #[arg(short = 'n', long = "name")]
         username: String,
-
-        /// Password
-        #[arg(short = 'p', long = "password")]
-        password: String,
     },
 
     /// Delete a selected user
@@ -42,10 +37,6 @@ enum Commands {
         /// Username
         #[arg(short = 'n', long = "name")]
         username: String,
-
-        /// Password
-        #[arg(short = 'p', long = "password")]
-        password: String,
     },
 
     /// Login user
@@ -53,39 +44,40 @@ enum Commands {
         /// Username
         #[arg(short = 'n', long = "name")]
         username: String,
-
-        /// Password
-        #[arg(short = 'p', long = "password")]
-        password: String,
     },
 
     /// Change user password
     Edit {
         #[arg(long = "name", short = 'n')]
         username: String,
-
-        #[arg(long = "old")]
-        old_password: String,
-
-        #[arg(long = "new")]
-        new_password: String,
     },
+}
+
+// Prompt for a password without echoing it to the terminal or exposing it
+// via argv/history (usereg is invoked from vsh, which logs argv to history).
+fn prompt_password(label: &str) -> anyhow::Result<String> {
+    rpassword::prompt_password(format!("{label}: ")).context("Failed to read password")
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
-        Commands::New { username, password } => {
+        Commands::New { username } => {
+            let password = prompt_password("Password")?;
             add_user(username, password)?;
         }
-        Commands::Delete { username, password } => {
+        Commands::Delete { username } => {
+            let password = prompt_password("Password")?;
             delete_user(username, password)?;
         }
-        Commands::Login { username, password } => {
+        Commands::Login { username } => {
+            let password = prompt_password("Password")?;
             login_user(username, password)?;
         }
-        Commands::Edit { username, old_password, new_password } => {
+        Commands::Edit { username } => {
+            let old_password = prompt_password("Old password")?;
+            let new_password = prompt_password("New password")?;
             edit_user(username, old_password, new_password)?;
         }
     }
@@ -130,7 +122,9 @@ fn hash_password(password: &str) -> anyhow::Result<String, argon2::password_hash
 
 // Verify password
 fn verify_password(password: &str, hash: &str) -> bool {
-    let parsed_hash = PasswordHash::new(hash).unwrap();
+    let Ok(parsed_hash) = PasswordHash::new(hash) else {
+        return false;
+    };
 
     Argon2::default().verify_password(password.as_bytes(), &parsed_hash).is_ok()
 }
@@ -154,9 +148,11 @@ fn add_user(username: String, password: String) -> anyhow::Result<()> {
 
         // Save user data
         save_data(ETC_USERSPACE_PATH, &user_data)?;
-        
+
+        create_userspace(&username)?;
+
         println!("User {} successfully created!", username);
-        
+
         return Ok(());
     }
 

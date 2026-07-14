@@ -28,15 +28,20 @@ fn main() {
     for path_str in &args.paths {
         let path = Path::new(path_str);
 
-        // Check if path exists
-        if !path.exists() {
-            eprintln!("rm: cannot remove '{}': No such file or directory", path_str);
-            error_occurred = true;
-            continue;
-        }
+        // Use symlink_metadata so broken/dangling symlinks are detected
+        // instead of being silently followed (and reported as missing).
+        let meta = match fs::symlink_metadata(path) {
+            Ok(m) => m,
+            Err(_) => {
+                eprintln!("rm: cannot remove '{}': No such file or directory", path_str);
+                error_occurred = true;
+                continue;
+            }
+        };
 
-        let res = if path.is_dir() {
-            // Check if it's a directory
+        let res = if meta.is_symlink() {
+            fs::remove_file(path)
+        } else if meta.is_dir() {
             if args.recursive {
                 fs::remove_dir_all(path)
             } else {
@@ -44,12 +49,8 @@ fn main() {
                 error_occurred = true;
                 continue;
             }
-        // Check if it's a file
-        } else if path.is_file() {
-            fs::remove_file(path)
-        // Check if it's a symlink
         } else {
-            fs::remove_dir(path)
+            fs::remove_file(path)
         };
 
         // Handle result
@@ -57,12 +58,9 @@ fn main() {
             eprintln!("Failed to remove '{}': {}", path_str, e);
             error_occurred = true;
         }
+    }
 
-        // Print success message
-        if error_occurred {
-            std::process::exit(1);
-        }
-
-
+    if error_occurred {
+        std::process::exit(1);
     }
 }

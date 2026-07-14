@@ -27,10 +27,45 @@ pub fn get_current_username() -> anyhow::Result<String> {
 
 // Split command and arguments
 pub fn split_cmd_and_args(cmd: &str) -> (String, Vec<String>) {
-    let mut parts = cmd.split_whitespace();
-    let cmd = parts.next().unwrap_or("").to_string();
-    let args = parts.map(|s| s.to_string()).collect();
+    let mut words = split_words(cmd).into_iter();
+    let cmd = words.next().unwrap_or_default();
+    let args = words.collect();
     (cmd, args)
+}
+
+// Split into whitespace-separated words without splitting inside quotes.
+// Quote characters are left in place so `expand()` can strip/interpret
+// them per word afterwards.
+fn split_words(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    for c in s.chars() {
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                current.push(c);
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                current.push(c);
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+
+    if !current.is_empty() {
+        words.push(current);
+    }
+
+    words
 }
 
 // Expand variables, ~ and special params in a single word.
@@ -441,3 +476,21 @@ impl TokenParse {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quoted_word_stays_one_arg() {
+        let (cmd, args) = split_cmd_and_args("echo \"hello world\" foo");
+        assert_eq!(cmd, "echo");
+        assert_eq!(args, vec!["\"hello world\"", "foo"]);
+    }
+
+    #[test]
+    fn expand_strips_quotes_after_split() {
+        let (_, args) = split_cmd_and_args("echo \"hello world\"");
+        assert_eq!(expand(&args[0], 0), "hello world");
+    }
+}
