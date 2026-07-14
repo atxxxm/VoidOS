@@ -3,3 +3,4 @@ build/
 rootfs/
 *cpio
 .claude/
+glibc-sysroot/

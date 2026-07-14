@@ -19,15 +19,15 @@ function Require($cmd, $hint) {
 if (-not $RunOnly) {
     Require "cargo" "Install Rust: https://rustup.rs"
 
-    # Ensure the Linux musl cross-compilation target is installed
+    # Ensure the Linux gnu (glibc) cross-compilation target is installed
     $installed = rustup target list --installed 2>&1
-    if ($installed -notmatch "x86_64-unknown-linux-musl") {
-        Write-Host "Installing x86_64-unknown-linux-musl target..."
-        rustup target add x86_64-unknown-linux-musl
+    if ($installed -notmatch "x86_64-unknown-linux-gnu") {
+        Write-Host "Installing x86_64-unknown-linux-gnu target..."
+        rustup target add x86_64-unknown-linux-gnu
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 
-    # Ensure cargo-zigbuild is installed (provides musl cross-linker on Windows)
+    # Ensure cargo-zigbuild is installed (provides glibc cross-linker on Windows)
     if (-not (Get-Command cargo-zigbuild -ErrorAction SilentlyContinue)) {
         Write-Host "Installing cargo-zigbuild..."
         cargo install cargo-zigbuild

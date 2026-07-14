@@ -6,7 +6,20 @@ use std::{
 };
 use walkdir::WalkDir;
 
-const TARGET: &str = "x86_64-unknown-linux-musl";
+// Base triple; this is also the name of the directory cargo/zigbuild puts
+// artifacts under (target/<TARGET>/release), regardless of the glibc
+// version suffix passed to --target below.
+const TARGET: &str = "x86_64-unknown-linux-gnu";
+
+// Versioned target passed to `cargo zigbuild`: pins the minimum glibc ABI
+// binaries require (2.31 ~ Ubuntu 20.04 / Debian 11) for broad compatibility.
+const ZIG_TARGET: &str = "x86_64-unknown-linux-gnu.2.31";
+
+// Directory holding real glibc runtime shared objects (libc.so.6,
+// ld-linux-x86-64.so.2, ...) to bundle into the rootfs. Zig only provides
+// link-time stubs, not runtime libraries, so this must be populated by hand
+// (e.g. copied out of a real glibc-based Linux system) before building.
+const GLIBC_SYSROOT_PATH: &str = "../os/glibc-sysroot";
 
 const INIT_PATH: &str = "../dev/Rust/init";
 const DEMON_CONTROLLER_PATH: &str = "../dev/Rust/demon-controller";
@@ -20,8 +33,13 @@ fn build_crate(path: &Path) {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     println!("Building {name}...");
 
+    // Embed an RPATH pointing at /lib64 so the dynamic linker finds our
+    // bundled glibc there regardless of which distro built it (Debian's
+    // ld.so defaults to /lib/x86_64-linux-gnu, not /lib64, and we have no
+    // ld.so.cache to widen its search).
     let status = Command::new("cargo")
-        .args(["zigbuild", "--release", &format!("--target={TARGET}")])
+        .args(["zigbuild", "--release", &format!("--target={ZIG_TARGET}")])
+        .env("RUSTFLAGS", "-C link-arg=-Wl,-rpath,/lib64")
         .current_dir(path)
         .status()
         .unwrap_or_else(|e| panic!("failed to run cargo in {path:?}: {e}"));
@@ -66,6 +84,31 @@ fn bins_in_dir(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+// Copy every regular file from the glibc sysroot dir (ld-linux, libc.so.6,
+// libm.so.6, ...) into rootfs/lib64. The sysroot isn't produced by this
+// build: zig only supplies link-time stubs, so someone has to populate
+// GLIBC_SYSROOT_PATH by hand from a real glibc-based Linux system first.
+fn copy_glibc_sysroot(sysroot: &Path, dest: &Path) -> std::io::Result<()> {
+    if !sysroot.exists() {
+        eprintln!(
+            "Warning: glibc sysroot not found at {sysroot:?} — binaries will be \
+             dynamically linked but missing libc.so.6 / ld-linux-x86-64.so.2 at \
+             boot. Populate that directory before running VoidOS."
+        );
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(sysroot)?.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() {
+            let name = entry.file_name();
+            fs::copy(&path, dest.join(&name))?;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> std::io::Result<()> {
     let base = std::env::current_dir()?;
     let rootfs = base.join(ROOTFS_REL_PATH);
@@ -82,6 +125,9 @@ fn main() -> std::io::Result<()> {
     fs::create_dir_all(rootfs.join("tmp"))?;
     fs::create_dir_all(rootfs.join("dev"))?;
     fs::create_dir_all(rootfs.join("home"))?;
+    // Dynamic linker + glibc runtime libs (interpreter path baked into
+    // our binaries is /lib64/ld-linux-x86-64.so.2)
+    fs::create_dir_all(rootfs.join("lib64"))?;
 
     fs::write(rootfs.join("etc/demons.d"), "syslog\ncrond")?;
     // Default empty crontab (lines: min hour mday mon wday command)
@@ -140,6 +186,9 @@ fn main() -> std::io::Result<()> {
         )?;
     }
 
+    // glibc runtime (ld-linux-x86-64.so.2, libc.so.6, ...)
+    copy_glibc_sysroot(&base.join(GLIBC_SYSROOT_PATH), &rootfs.join("lib64"))?;
+
     // Create initramfs
     println!("Creating initramfs.cpio...");
     let cpio_path = rootfs.parent().unwrap().join("initramfs.cpio");
@@ -183,6 +232,7 @@ mod cpio {
             || rel.starts_with("bin/")
             || rel.starts_with("sbin/")
             || rel.starts_with("etc/demons/")
+            || rel.starts_with("lib64/")
         {
             return 0o100755;
         }
