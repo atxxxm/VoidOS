@@ -5,11 +5,29 @@ use nix::{
 };
 use std::{ffi::CString, fs, thread, time::Duration};
 
+// A raw serial line (ttyS0 under QEMU -nographic) has no side channel for
+// window size the way a pty does, so TIOCGWINSZ on it reports 0x0 with no
+// error. Full-screen TUI apps (bit) then lay themselves out into a
+// zero-area frame and render nothing. Stamp a fixed size here so every
+// later process sees a sane, non-zero terminal size.
+fn set_console_size(fd: libc::c_int, cols: u16, rows: u16) {
+    let ws = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    unsafe {
+        libc::ioctl(fd, libc::TIOCSWINSZ, &ws);
+    }
+}
+
 fn setup_console() {
     unsafe {
         let path = b"/dev/console\0".as_ptr() as *const libc::c_char;
         let fd = libc::open(path, libc::O_RDWR);
         if fd >= 0 {
+            set_console_size(fd, 120, 40);
             libc::dup2(fd, 0);
             libc::dup2(fd, 1);
             libc::dup2(fd, 2);
