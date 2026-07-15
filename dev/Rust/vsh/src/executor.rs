@@ -4,13 +4,58 @@ use std::{
     process::{Command, Stdio},
 };
 
-use crate::utils::{ExecNode, Token, TokenParse, Tokenize, expand, get_current_path};
+use crate::utils::{ExecNode, Token, TokenParse, Tokenize, expand, expand_arg, get_current_path};
 use anyhow;
+
+// vsh runs external commands with raw mode off, so Ctrl+C generates a real
+// SIGINT via the terminal driver rather than arriving as a key event --
+// and since the child inherits the same process group as vsh (no
+// setpgid/tcsetpgrp session dance here; see the module-level note below),
+// that SIGINT would otherwise hit both of them. Instead vsh ignores SIGINT
+// for its own lifetime (see Shell::new), and every spawned child restores
+// default SIGINT handling for itself right before exec -- so Ctrl+C kills
+// the running command as expected without also killing the shell.
+//
+// This is deliberately not full POSIX job control (no process groups, no
+// tcsetpgrp handing the terminal to the foreground job): that would also
+// require init to set vsh up as a session leader with a controlling
+// terminal, which is a bigger, separate change. The ignore/restore-default
+// SIGINT pattern is what real shells rely on for this specific problem
+// regardless of whether they also do full job control.
+#[cfg(unix)]
+fn restore_default_sigint(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::signal(libc::SIGINT, libc::SIG_DFL);
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigint(_cmd: &mut Command) {}
+
+// Called once at shell startup (see Shell::new).
+#[cfg(unix)]
+pub fn ignore_sigint() {
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_IGN);
+    }
+}
+
+#[cfg(not(unix))]
+pub fn ignore_sigint() {}
 
 pub struct Executor {
     prompt: String,
     tokens: Vec<Token>,
     last_exit: i32,
+    // Jobs spawned by a `&` this run encountered, handed to the caller via
+    // take_background_jobs() so the (persistent, cross-command) shell can
+    // register them in its job table. Executor itself doesn't know
+    // anything about job ids/listing -- see jobs.rs for that.
+    background_jobs: Vec<(String, std::thread::JoinHandle<i32>)>,
 }
 
 impl Executor {
@@ -19,6 +64,7 @@ impl Executor {
             prompt: prompt.to_string(),
             tokens: Vec::new(),
             last_exit,
+            background_jobs: Vec::new(),
         }
     }
 
@@ -35,10 +81,14 @@ impl Executor {
         self.tokens = Tokenize::new(&self.prompt).tokenize();
     }
 
+    pub fn take_background_jobs(&mut self) -> Vec<(String, std::thread::JoinHandle<i32>)> {
+        std::mem::take(&mut self.background_jobs)
+    }
+
     // AST //
 
     // Execute AST
-    pub fn execute(&self, node: &ExecNode) -> anyhow::Result<i32> {
+    pub fn execute(&mut self, node: &ExecNode) -> anyhow::Result<i32> {
         match node {
             ExecNode::Command {
                 program,
@@ -78,6 +128,27 @@ impl Executor {
                 self.execute(left)?;
                 return Ok(self.execute(right)?);
             }
+            ExecNode::Background(inner) => {
+                // A backgrounded sub-tree can never itself contain another
+                // Background node (see the ExecNode::Background doc
+                // comment), so this fresh, self-contained Executor never
+                // needs to reach back into `self` -- it's free to run on
+                // its own thread without any lifetime ties to this one.
+                let owned = (**inner).clone();
+                let last_exit = self.last_exit;
+                let description = self.prompt.clone();
+                let handle = std::thread::spawn(move || {
+                    let mut bg_executor = Executor {
+                        prompt: String::new(),
+                        tokens: Vec::new(),
+                        last_exit,
+                        background_jobs: Vec::new(),
+                    };
+                    bg_executor.execute(&owned).unwrap_or(1)
+                });
+                self.background_jobs.push((description, handle));
+                return Ok(0);
+            }
         }
     }
 
@@ -111,9 +182,10 @@ impl Executor {
             };
 
             let prog = expand(program, self.last_exit);
-            let prog_args: Vec<String> = args.iter().map(|a| expand(a, self.last_exit)).collect();
+            let prog_args: Vec<String> = args.iter().flat_map(|a| expand_arg(a, self.last_exit)).collect();
             let mut cmd = Command::new(&prog);
             cmd.args(&prog_args);
+            restore_default_sigint(&mut cmd);
 
             // The previous stage's output takes priority over this stage's
             // own `<` redirect (which only really applies to the first
@@ -176,7 +248,7 @@ impl Executor {
         stderr_to_stdout: bool,
     ) -> anyhow::Result<i32> {
         let program = expand(program, self.last_exit);
-        let args: Vec<String> = args.iter().map(|a| expand(a, self.last_exit)).collect();
+        let args: Vec<String> = args.iter().flat_map(|a| expand_arg(a, self.last_exit)).collect();
         let stdin: Option<String> = stdin.as_ref().map(|s| expand(s, self.last_exit));
         let stdout: Option<String> = stdout.as_ref().map(|s| expand(s, self.last_exit));
         let stderr: Option<String> = stderr.as_ref().map(|s| expand(s, self.last_exit));
@@ -201,6 +273,7 @@ impl Executor {
 
         let mut cmd = Command::new(&program);
         cmd.args(&args);
+        restore_default_sigint(&mut cmd);
 
         if let Some(file) = &stdin {
             if let Ok(f) = File::open(file) {

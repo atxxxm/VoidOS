@@ -302,6 +302,7 @@ dependencies = [
  "anyhow",
  "colored",
  "crossterm",
+ "libc",
 ]
 
 [[package]]
