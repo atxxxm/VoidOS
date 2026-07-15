@@ -1,6 +1,11 @@
 use std::{fs, io, path::PathBuf};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    layout::Rect,
+};
+
+use crate::highlight::Highlighter;
 
 // ---------------------------------------------------------------------------
 // Undo/redo
@@ -49,6 +54,9 @@ pub struct Buffer {
     pub filename: Option<PathBuf>,
     pub modified: bool,
     pub selection_anchor: Option<(usize, usize)>,
+    // Snapshot of `lines` as of the last save (or initial load) -- diffed
+    // against the live buffer to mark changed lines in the gutter.
+    saved_lines: Vec<String>,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
     last_edit_kind: Option<EditKind>,
@@ -70,6 +78,7 @@ impl Buffer {
         };
 
         Ok(Self {
+            saved_lines: lines.clone(),
             lines,
             cursor_row: 0,
             cursor_col: 0,
@@ -370,9 +379,16 @@ impl Buffer {
         self.record_undo(EditKind::Newline);
         let idx = char_byte_index(&self.lines[self.cursor_row], self.cursor_col);
         let rest = self.lines[self.cursor_row].split_off(idx);
-        self.lines.insert(self.cursor_row + 1, rest);
+        // Auto-indent: carry over the leading whitespace of the line we're
+        // leaving, so blocks of code stay aligned without retyping tabs.
+        let indent: String = self.lines[self.cursor_row]
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        let new_line = format!("{indent}{rest}");
+        self.lines.insert(self.cursor_row + 1, new_line);
         self.cursor_row += 1;
-        self.cursor_col = 0;
+        self.cursor_col = indent.chars().count();
         self.modified = true;
     }
 
@@ -497,6 +513,7 @@ impl Buffer {
         match fs::write(&path, self.lines.join("\n")) {
             Ok(()) => {
                 self.modified = false;
+                self.saved_lines = self.lines.clone();
                 SaveOutcome::Saved(path)
             }
             Err(e) => SaveOutcome::Failed(e),
@@ -507,9 +524,55 @@ impl Buffer {
         let path = PathBuf::from(name);
         fs::write(&path, self.lines.join("\n"))?;
         self.modified = false;
+        self.saved_lines = self.lines.clone();
         self.filename = Some(path.clone());
         Ok(path)
     }
+
+    // -- gutter change indicator -------------------------------------------
+
+    // Which currently-existing lines differ from the last-saved state, via
+    // a plain LCS diff (correctly tracks inserted lines instead of naively
+    // flagging everything below one as "changed"). Skipped above a size
+    // guard to bound worst-case O(n*m) time/space on huge files.
+    pub fn changed_lines(&self) -> Option<Vec<bool>> {
+        let n = self.saved_lines.len();
+        let m = self.lines.len();
+        if n.saturating_mul(m) > 4_000_000 {
+            return None;
+        }
+        Some(diff_added_lines(&self.saved_lines, &self.lines))
+    }
+}
+
+fn diff_added_lines(saved: &[String], current: &[String]) -> Vec<bool> {
+    let n = saved.len();
+    let m = current.len();
+    let mut dp = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if saved[i] == current[j] {
+                dp[i + 1][j + 1] + 1
+            } else {
+                dp[i + 1][j].max(dp[i][j + 1])
+            };
+        }
+    }
+
+    let mut changed = vec![true; m];
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if saved[i] == current[j] {
+            changed[j] = false;
+            i += 1;
+            j += 1;
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    changed
 }
 
 fn chars_slice(s: &str, from: usize, to: usize) -> String {
@@ -579,6 +642,11 @@ pub struct App {
     pub message: Option<String>,
     pub should_quit: bool,
     pub clipboard: Option<String>,
+    pub highlighter: Highlighter,
+    // The text area's screen rect as of the last render, used to translate
+    // mouse-click coordinates back into buffer (row, col). Zeroed until the
+    // first draw; a click before that just misses the bounds check below.
+    pub last_text_area: Rect,
 }
 
 impl App {
@@ -599,6 +667,8 @@ impl App {
             message: None,
             should_quit: false,
             clipboard: None,
+            highlighter: Highlighter::new(),
+            last_text_area: Rect::new(0, 0, 0, 0),
         })
     }
 
@@ -736,6 +806,40 @@ impl App {
         }
     }
 
+    // Only click-to-position and wheel-scroll -- drag-to-select would need
+    // to track mouse-down state across events, which isn't worth the extra
+    // complexity for a terminal editor's mouse support.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(self.mode, Mode::Normal) {
+            return;
+        }
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.click_at(mouse.column, mouse.row),
+            MouseEventKind::ScrollUp => self.buf_mut().move_page(3, false),
+            MouseEventKind::ScrollDown => self.buf_mut().move_page(3, true),
+            _ => {}
+        }
+    }
+
+    fn click_at(&mut self, x: u16, y: u16) {
+        let area = self.last_text_area;
+        if area.width == 0
+            || area.height == 0
+            || x < area.x
+            || y < area.y
+            || x >= area.x + area.width
+            || y >= area.y + area.height
+        {
+            return;
+        }
+        let buf = self.buf_mut();
+        let row = (buf.row_offset + (y - area.y) as usize).min(buf.lines.len() - 1);
+        let col = buf.col_offset + (x - area.x) as usize;
+        buf.selection_anchor = None;
+        buf.cursor_row = row;
+        buf.cursor_col = col.min(buf.current_line_len());
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         match self.mode {
             Mode::Normal => self.handle_normal_key(key),
@@ -787,6 +891,10 @@ impl App {
                 KeyCode::Char('o') => self.mode = Mode::Open { input: String::new() },
                 KeyCode::Char('n') => self.new_buffer(),
                 KeyCode::Char('w') => self.request_close_active(),
+                KeyCode::Char('t') => {
+                    self.highlighter.cycle_theme();
+                    self.message = Some(format!("Theme: {}", self.highlighter.theme_name()));
+                }
                 KeyCode::PageDown => self.next_tab(),
                 KeyCode::PageUp => self.prev_tab(),
                 KeyCode::Char('q') => self.request_quit(),
@@ -1213,5 +1321,67 @@ mod tests {
         let mut app = new_app();
         app.request_close_active();
         assert!(app.should_quit);
+    }
+
+    // -- auto-indent ---------------------------------------------------------
+
+    #[test]
+    fn insert_newline_carries_over_leading_indentation() {
+        let mut buf = new_buf();
+        buf.insert_text("    if x {");
+        buf.insert_newline();
+        assert_eq!(buf.lines[1], "    ");
+        assert_eq!(buf.cursor_col, 4);
+    }
+
+    // -- gutter change indicator ----------------------------------------------
+
+    #[test]
+    fn changed_lines_tracks_insertions_without_flagging_unrelated_lines() {
+        let mut buf = new_buf();
+        buf.lines = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        buf.saved_lines = buf.lines.clone();
+
+        // Insert a new line at the top -- "b" and "c" should still read as
+        // unchanged even though their row index shifted by one.
+        buf.lines.insert(0, "new".to_string());
+
+        let changed = buf.changed_lines().unwrap();
+        assert_eq!(changed, vec![true, false, false, false]);
+    }
+
+    // -- mouse ----------------------------------------------------------------
+
+    #[test]
+    fn mouse_click_moves_cursor_to_clicked_position() {
+        let mut app = new_app();
+        app.buf_mut().insert_text("hello\nworld");
+        app.last_text_area = Rect::new(5, 2, 20, 10);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 8,
+            row: 3,
+            modifiers: KeyModifiers::empty(),
+        });
+
+        assert_eq!((app.buf().cursor_row, app.buf().cursor_col), (1, 3));
+    }
+
+    #[test]
+    fn mouse_click_outside_text_area_is_ignored() {
+        let mut app = new_app();
+        app.buf_mut().insert_text("hello");
+        let cursor_before = (app.buf().cursor_row, app.buf().cursor_col);
+        app.last_text_area = Rect::new(5, 2, 20, 10);
+
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        });
+
+        assert_eq!((app.buf().cursor_row, app.buf().cursor_col), cursor_before);
     }
 }

@@ -1,11 +1,12 @@
 mod app;
+mod highlight;
 mod ui;
 
 use std::{io, path::PathBuf};
 
 use ratatui::{
     crossterm::{
-        event::{self, Event, KeyEventKind},
+        event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
         execute,
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
@@ -26,7 +27,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
     }
 }
 
@@ -35,7 +36,7 @@ fn main() -> io::Result<()> {
     let mut app = App::new(paths)?;
 
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
 
     // A panic inside run() unwinds past the guard's Drop only after this
@@ -45,7 +46,7 @@ fn main() -> io::Result<()> {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         default_hook(info);
     }));
 
@@ -62,11 +63,10 @@ fn run<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut App) 
     loop {
         terminal.draw(|frame| ui(frame, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            app.handle_key(key);
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+            Event::Mouse(mouse) => app.handle_mouse(mouse),
+            _ => {}
         }
 
         if app.should_quit {

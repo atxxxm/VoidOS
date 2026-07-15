@@ -111,73 +111,66 @@ fn draw_tab_bar(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-#[derive(PartialEq, Clone, Copy)]
-enum SpanKind {
-    Plain,
-    CurrentLine,
-    Selected,
-    Match,
+// Per-row overlay info for build_line_spans, grouped into one struct so the
+// function doesn't need a long, easy-to-misorder parameter list.
+struct RowHighlight<'a> {
+    selection: Option<(usize, usize)>,
+    match_cols: &'a [usize],
+    query_len: usize,
+    char_styles: Option<&'a [Style]>,
 }
 
-fn style_for(kind: SpanKind) -> Style {
-    match kind {
-        SpanKind::Plain => Style::default(),
-        SpanKind::CurrentLine => Style::default().bg(CURRENT_LINE_BG),
-        SpanKind::Selected => Style::default().bg(SELECTION_BG),
-        SpanKind::Match => Style::default().bg(MATCH_BG).fg(Color::Black),
-    }
-}
-
-// Splits a (already horizontally-scrolled) line into styled spans:
-// selection highlight takes priority over search-match highlight, which
-// takes priority over the current-line background tint.
+// Splits a (already horizontally-scrolled) line into styled spans. Per-
+// character base style comes from syntax highlighting (if available);
+// selection and search-match highlighting are overlaid as backgrounds on
+// top of it, then the current-line background tint if neither applies.
 fn build_line_spans(
     line: &str,
     col_offset: usize,
     visible_cols: usize,
     is_cursor_row: bool,
-    selection: Option<(usize, usize)>,
-    match_cols: &[usize],
-    query_len: usize,
+    hl: &RowHighlight,
 ) -> Line<'static> {
     let chars: Vec<char> = line.chars().skip(col_offset).take(visible_cols).collect();
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut current = String::new();
-    let mut current_kind: Option<SpanKind> = None;
+    let mut current_style: Option<Style> = None;
 
     for (i, ch) in chars.iter().enumerate() {
         let abs_col = col_offset + i;
-        let in_selection = selection.is_some_and(|(s, e)| abs_col >= s && abs_col < e);
-        let in_match = match_cols.iter().any(|&m| abs_col >= m && abs_col < m + query_len);
+        let in_selection = hl.selection.is_some_and(|(s, e)| abs_col >= s && abs_col < e);
+        let in_match = hl
+            .match_cols
+            .iter()
+            .any(|&m| abs_col >= m && abs_col < m + hl.query_len);
 
-        let kind = if in_selection {
-            SpanKind::Selected
+        let base = hl
+            .char_styles
+            .and_then(|s| s.get(abs_col))
+            .copied()
+            .unwrap_or_default();
+        let style = if in_selection {
+            base.bg(SELECTION_BG)
         } else if in_match {
-            SpanKind::Match
+            base.bg(MATCH_BG).fg(Color::Black)
         } else if is_cursor_row {
-            SpanKind::CurrentLine
+            base.bg(CURRENT_LINE_BG)
         } else {
-            SpanKind::Plain
+            base
         };
 
-        if current_kind != Some(kind) {
+        if current_style != Some(style) {
             if !current.is_empty() {
                 spans.push(Span::styled(
                     std::mem::take(&mut current),
-                    style_for(current_kind.unwrap_or(SpanKind::Plain)),
+                    current_style.unwrap_or_default(),
                 ));
             }
-            current_kind = Some(kind);
+            current_style = Some(style);
         }
         current.push(*ch);
     }
-
-    let base_kind = if is_cursor_row {
-        SpanKind::CurrentLine
-    } else {
-        SpanKind::Plain
-    };
-    spans.push(Span::styled(current, style_for(current_kind.unwrap_or(base_kind))));
+    spans.push(Span::styled(current, current_style.unwrap_or_default()));
 
     Line::from(spans)
 }
@@ -206,15 +199,27 @@ fn draw_editor(frame: &mut Frame, area: Rect, app: &mut App) {
         _ => None,
     };
 
-    let buf = &mut app.buffers[app.active];
-    let gutter_width = buf.lines.len().to_string().len().max(2) as u16 + 2;
+    // Syntax highlighting needs the parser to walk every line above the one
+    // being rendered to track multi-line constructs correctly, so it works
+    // off the whole buffer rather than just the visible slice. Borrowed
+    // immutably alongside app.highlighter before we need &mut app.buffers.
+    let char_styles: Option<Vec<Vec<Style>>> = {
+        let buf = &app.buffers[app.active];
+        let filename = buf.filename.as_ref().and_then(|p| p.to_str());
+        app.highlighter.highlight(filename, &buf.lines)
+    };
+
+    let line_count = app.buffers[app.active].lines.len();
+    let gutter_width = line_count.to_string().len().max(2) as u16 + 2;
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(gutter_width), Constraint::Min(0)])
         .split(area);
     let gutter_area = cols[0];
     let text_area = cols[1];
+    app.last_text_area = text_area;
 
+    let buf = &mut app.buffers[app.active];
     let visible_rows = text_area.height as usize;
     let visible_cols = text_area.width as usize;
 
@@ -237,17 +242,20 @@ fn draw_editor(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|q| buf.find_all(q))
         .unwrap_or_default();
     let query_len = highlight_query.as_ref().map(|q| q.chars().count()).unwrap_or(0);
+    let changed = buf.changed_lines();
 
     let mut gutter_lines = Vec::new();
     let mut text_lines = Vec::new();
 
     for row in buf.row_offset..end_row {
         let is_cursor_row = row == buf.cursor_row;
+        let is_changed = changed.as_ref().is_some_and(|c| c[row]);
 
-        let num_style = if is_cursor_row {
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(DIM)
+        let num_style = match (is_cursor_row, is_changed) {
+            (true, true) => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            (true, false) => Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            (false, true) => Style::default().fg(Color::Yellow),
+            (false, false) => Style::default().fg(DIM),
         };
         gutter_lines.push(Line::from(Span::styled(
             format!("{:>width$} ", row + 1, width = (gutter_width - 1) as usize),
@@ -260,15 +268,20 @@ fn draw_editor(frame: &mut Frame, area: Rect, app: &mut App) {
             .filter(|m| m.0 == row)
             .map(|m| m.1)
             .collect();
+        let row_styles = char_styles.as_ref().map(|rows| rows[row].as_slice());
+        let hl = RowHighlight {
+            selection: sel_cols,
+            match_cols: &row_matches,
+            query_len,
+            char_styles: row_styles,
+        };
 
         text_lines.push(build_line_spans(
             &buf.lines[row],
             buf.col_offset,
             visible_cols,
             is_cursor_row,
-            sel_cols,
-            &row_matches,
-            query_len,
+            &hl,
         ));
     }
 
@@ -282,7 +295,7 @@ fn draw_editor(frame: &mut Frame, area: Rect, app: &mut App) {
 
 fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let hint = app.message.clone().unwrap_or_else(|| {
-        " Ctrl+S save  Ctrl+Z/Y undo/redo  Ctrl+F find  Ctrl+H replace  \
+        " Ctrl+S save  Ctrl+Z/Y undo/redo  Ctrl+F find  Ctrl+H replace  Ctrl+T theme  \
           Ctrl+O open  Ctrl+PgUp/PgDn tabs  Ctrl+W close  Ctrl+Q quit"
             .to_string()
     });
