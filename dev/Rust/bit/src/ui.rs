@@ -129,7 +129,7 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let hint = app
         .message
         .clone()
-        .unwrap_or_else(|| " Ctrl+S save   Ctrl+Q quit".to_string());
+        .unwrap_or_else(|| " Ctrl+S save   Ctrl+Z undo   Ctrl+Y redo   Ctrl+Q quit".to_string());
     let pos = format!(" Ln {}, Col {} ", app.cursor_row + 1, app.cursor_col + 1);
 
     let chunks = Layout::default()

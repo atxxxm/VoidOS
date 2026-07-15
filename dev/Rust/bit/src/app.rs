@@ -8,6 +8,24 @@ pub enum Mode {
     ConfirmQuit,
 }
 
+// Consecutive edits of the same kind are coalesced into one undo step (so
+// typing a word is one Ctrl+Z, not one per keystroke). Any non-edit action
+// (cursor movement, save, ...) closes the current group.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum EditKind {
+    Insert,
+    Delete,
+    Newline,
+}
+
+struct Snapshot {
+    lines: Vec<String>,
+    cursor_row: usize,
+    cursor_col: usize,
+}
+
+const MAX_UNDO_DEPTH: usize = 500;
+
 pub struct App {
     pub lines: Vec<String>,
     pub cursor_row: usize,
@@ -19,6 +37,9 @@ pub struct App {
     pub message: Option<String>,
     pub mode: Mode,
     pub should_quit: bool,
+    undo_stack: Vec<Snapshot>,
+    redo_stack: Vec<Snapshot>,
+    last_edit_kind: Option<EditKind>,
 }
 
 impl App {
@@ -47,7 +68,64 @@ impl App {
             message: None,
             mode: Mode::Normal,
             should_quit: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            last_edit_kind: None,
         })
+    }
+
+    // Snapshot the pre-edit state unless this edit continues the same
+    // group as the previous one, so runs of typing/deleting collapse into
+    // a single undo step.
+    fn record_undo(&mut self, kind: EditKind) {
+        if self.last_edit_kind != Some(kind) {
+            self.undo_stack.push(Snapshot {
+                lines: self.lines.clone(),
+                cursor_row: self.cursor_row,
+                cursor_col: self.cursor_col,
+            });
+            if self.undo_stack.len() > MAX_UNDO_DEPTH {
+                self.undo_stack.remove(0);
+            }
+            self.redo_stack.clear();
+            self.last_edit_kind = Some(kind);
+        }
+    }
+
+    pub fn undo(&mut self) {
+        let Some(snapshot) = self.undo_stack.pop() else {
+            self.message = Some("Nothing to undo".to_string());
+            return;
+        };
+        self.redo_stack.push(Snapshot {
+            lines: self.lines.clone(),
+            cursor_row: self.cursor_row,
+            cursor_col: self.cursor_col,
+        });
+        self.lines = snapshot.lines;
+        self.cursor_row = snapshot.cursor_row;
+        self.cursor_col = snapshot.cursor_col;
+        self.last_edit_kind = None;
+        self.modified = true;
+        self.message = Some("Undo".to_string());
+    }
+
+    pub fn redo(&mut self) {
+        let Some(snapshot) = self.redo_stack.pop() else {
+            self.message = Some("Nothing to redo".to_string());
+            return;
+        };
+        self.undo_stack.push(Snapshot {
+            lines: self.lines.clone(),
+            cursor_row: self.cursor_row,
+            cursor_col: self.cursor_col,
+        });
+        self.lines = snapshot.lines;
+        self.cursor_row = snapshot.cursor_row;
+        self.cursor_col = snapshot.cursor_col;
+        self.last_edit_kind = None;
+        self.modified = true;
+        self.message = Some("Redo".to_string());
     }
 
     pub fn current_line_len(&self) -> usize {
@@ -62,6 +140,7 @@ impl App {
     }
 
     pub fn move_up(&mut self) {
+        self.last_edit_kind = None;
         if self.cursor_row > 0 {
             self.cursor_row -= 1;
             self.clamp_col();
@@ -69,6 +148,7 @@ impl App {
     }
 
     pub fn move_down(&mut self) {
+        self.last_edit_kind = None;
         if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
             self.clamp_col();
@@ -76,6 +156,7 @@ impl App {
     }
 
     pub fn move_left(&mut self) {
+        self.last_edit_kind = None;
         if self.cursor_col > 0 {
             self.cursor_col -= 1;
         } else if self.cursor_row > 0 {
@@ -85,6 +166,7 @@ impl App {
     }
 
     pub fn move_right(&mut self) {
+        self.last_edit_kind = None;
         let len = self.current_line_len();
         if self.cursor_col < len {
             self.cursor_col += 1;
@@ -95,10 +177,12 @@ impl App {
     }
 
     pub fn move_home(&mut self) {
+        self.last_edit_kind = None;
         self.cursor_col = 0;
     }
 
     pub fn move_end(&mut self) {
+        self.last_edit_kind = None;
         self.cursor_col = self.current_line_len();
     }
 
@@ -113,6 +197,7 @@ impl App {
     }
 
     pub fn insert_char(&mut self, c: char) {
+        self.record_undo(EditKind::Insert);
         let idx = char_byte_index(&self.lines[self.cursor_row], self.cursor_col);
         self.lines[self.cursor_row].insert(idx, c);
         self.cursor_col += 1;
@@ -120,6 +205,7 @@ impl App {
     }
 
     pub fn insert_newline(&mut self) {
+        self.record_undo(EditKind::Newline);
         let idx = char_byte_index(&self.lines[self.cursor_row], self.cursor_col);
         let rest = self.lines[self.cursor_row].split_off(idx);
         self.lines.insert(self.cursor_row + 1, rest);
@@ -129,6 +215,7 @@ impl App {
     }
 
     pub fn backspace(&mut self) {
+        self.record_undo(EditKind::Delete);
         if self.cursor_col > 0 {
             let idx = char_byte_index(&self.lines[self.cursor_row], self.cursor_col - 1);
             self.lines[self.cursor_row].remove(idx);
@@ -144,6 +231,7 @@ impl App {
     }
 
     pub fn delete_forward(&mut self) {
+        self.record_undo(EditKind::Delete);
         let len = self.current_line_len();
         if self.cursor_col < len {
             let idx = char_byte_index(&self.lines[self.cursor_row], self.cursor_col);
@@ -194,6 +282,8 @@ impl App {
                     self.message = Some(format!("Save failed: {e}"));
                 }
             }
+            (KeyCode::Char('z'), true) => self.undo(),
+            (KeyCode::Char('y'), true) => self.redo(),
             (KeyCode::Char('q'), true) => {
                 if self.modified {
                     self.mode = Mode::ConfirmQuit;
@@ -277,4 +367,71 @@ fn char_byte_index(s: &str, char_idx: usize) -> usize {
         .nth(char_idx)
         .map(|(i, _)| i)
         .unwrap_or(s.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_app() -> App {
+        App::new(None).unwrap()
+    }
+
+    #[test]
+    fn undo_reverts_a_run_of_typed_chars_in_one_step() {
+        let mut app = new_app();
+        for c in "hi".chars() {
+            app.insert_char(c);
+        }
+        assert_eq!(app.lines, vec!["hi".to_string()]);
+
+        app.undo();
+        assert_eq!(app.lines, vec!["".to_string()]);
+        assert_eq!(app.cursor_col, 0);
+    }
+
+    #[test]
+    fn cursor_movement_breaks_the_undo_group() {
+        let mut app = new_app();
+        app.insert_char('a');
+        app.move_left();
+        app.insert_char('b');
+        assert_eq!(app.lines, vec!["ba".to_string()]);
+
+        app.undo();
+        assert_eq!(app.lines, vec!["a".to_string()]);
+        app.undo();
+        assert_eq!(app.lines, vec!["".to_string()]);
+    }
+
+    #[test]
+    fn redo_reapplies_an_undone_edit() {
+        let mut app = new_app();
+        app.insert_char('x');
+        app.undo();
+        assert_eq!(app.lines, vec!["".to_string()]);
+
+        app.redo();
+        assert_eq!(app.lines, vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn editing_after_undo_clears_the_redo_stack() {
+        let mut app = new_app();
+        app.insert_char('a');
+        app.undo();
+        app.insert_char('b');
+
+        app.redo();
+        // 'a' was discarded once a new edit was made after the undo.
+        assert_eq!(app.lines, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn undo_with_empty_stack_leaves_buffer_untouched() {
+        let mut app = new_app();
+        app.undo();
+        assert_eq!(app.lines, vec!["".to_string()]);
+        assert_eq!(app.message.as_deref(), Some("Nothing to undo"));
+    }
 }
