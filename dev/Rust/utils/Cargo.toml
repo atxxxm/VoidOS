@@ -8,9 +8,31 @@ anyhow = "1.0.100"
 argon2 = { version = "0.5.3", features = ["std", "password-hash"] }
 clap = { version = "4.5.53", features = ["derive"] }
 colored = "3.0.0"
+libc = "0.2"
 rpassword = "7.3.1"
 serde = { version = "1.0.228", features = ["derive"] }
+time = { version = "0.3.44", features = ["formatting"] }
 toml = "0.9.10"
+
+[[bin]]
+name = "date"
+path = "bin/date.rs"
+
+[[bin]]
+name = "env"
+path = "bin/env.rs"
+
+[[bin]]
+name = "kill"
+path = "bin/kill.rs"
+
+[[bin]]
+name = "ps"
+path = "bin/ps.rs"
+
+[[bin]]
+name = "uname"
+path = "bin/uname.rs"
 
 [[bin]]
 name = "usereg"
@@ -19,3 +41,7 @@ path = "bin/usereg.rs"
 [[bin]]
 name = "void"
 path = "bin/void.rs"
+
+[[bin]]
+name = "which"
+path = "bin/which.rs"

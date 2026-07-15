@@ -9,6 +9,7 @@ chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive"] }
 colored = "3.0.0"
 globset = "0.4.18"
+libc = "0.2"
 rayon = "1.11.0"
 regex = "1.12.2"
 time = { version = "0.3.44", features = ["macros", "formatting"] }
@@ -19,8 +20,16 @@ name = "cat"
 path = "bin/cat.rs"
 
 [[bin]]
+name = "chmod"
+path = "bin/chmod.rs"
+
+[[bin]]
 name = "cp"
 path = "bin/cp.rs"
+
+[[bin]]
+name = "df"
+path = "bin/df.rs"
 
 [[bin]]
 name = "find"
@@ -29,6 +38,14 @@ path = "bin/find.rs"
 [[bin]]
 name = "grep"
 path = "bin/grep.rs"
+
+[[bin]]
+name = "head"
+path = "bin/head.rs"
+
+[[bin]]
+name = "ln"
+path = "bin/ln.rs"
 
 [[bin]]
 name = "ls"
@@ -51,5 +68,13 @@ name = "rmdir"
 path = "bin/rmdir.rs"
 
 [[bin]]
+name = "tail"
+path = "bin/tail.rs"
+
+[[bin]]
 name = "touch"
 path = "bin/touch.rs"
+
+[[bin]]
+name = "wc"
+path = "bin/wc.rs"
