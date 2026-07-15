@@ -81,37 +81,86 @@ impl Executor {
         }
     }
 
-    // Execute pipe
+    // Execute pipe. `Pipe` nodes nest right-heavy for chains like `a | b | c`
+    // (built as Pipe{left: Pipe{a,b}, right: c}), so this flattens the tree
+    // into an ordered list of stages first instead of assuming exactly two
+    // -- a bare two-way match here is what previously made any pipe with
+    // more than one `|` fail with "left side of pipe must be a command".
     fn exec_pipe(&self, left: &ExecNode, right: &ExecNode) -> anyhow::Result<i32> {
-        let mut left_child = match left {
-            ExecNode::Command { program, args, .. } => {
-                let prog = expand(program, self.last_exit);
-                let args: Vec<String> = args.iter().map(|a| expand(a, self.last_exit)).collect();
-                let mut c = Command::new(&prog);
-                c.args(&args);
-                c.stdout(Stdio::piped());
-                c.spawn()?
+        let mut stages = Vec::new();
+        self.flatten_pipe(left, &mut stages)?;
+        self.flatten_pipe(right, &mut stages)?;
+
+        let last = stages.len() - 1;
+        let mut children = Vec::with_capacity(stages.len());
+        let mut prev_stdout: Option<std::process::ChildStdout> = None;
+
+        for (i, node) in stages.iter().enumerate() {
+            let ExecNode::Command {
+                program,
+                args,
+                stdin,
+                stdout,
+                append,
+                stderr,
+                err_append,
+                stderr_to_stdout,
+            } = node
+            else {
+                anyhow::bail!("pipe segments must be plain commands");
+            };
+
+            let prog = expand(program, self.last_exit);
+            let prog_args: Vec<String> = args.iter().map(|a| expand(a, self.last_exit)).collect();
+            let mut cmd = Command::new(&prog);
+            cmd.args(&prog_args);
+
+            // The previous stage's output takes priority over this stage's
+            // own `<` redirect (which only really applies to the first
+            // stage, but is honored wherever it's written).
+            if let Some(out) = prev_stdout.take() {
+                cmd.stdin(Stdio::from(out));
+            } else if let Some(file) = stdin {
+                let file = expand(file, self.last_exit);
+                if let Ok(f) = File::open(&file) {
+                    cmd.stdin(Stdio::from(f));
+                }
             }
-            _ => anyhow::bail!("left side of pipe must be a command"),
-        };
 
-        let left_out = left_child.stdout.take().unwrap();
-
-        let mut right_child = match right {
-            ExecNode::Command { program, args, .. } => {
-                let prog = expand(program, self.last_exit);
-                let args: Vec<String> = args.iter().map(|a| expand(a, self.last_exit)).collect();
-                let mut c = Command::new(&prog);
-                c.args(&args);
-                c.stdin(left_out);
-                c.spawn()?
+            if i == last {
+                self.configure_stdout(&mut cmd, stdout, *append);
+                self.configure_stderr(&mut cmd, stdout, *append, stderr, *err_append, *stderr_to_stdout);
+            } else {
+                cmd.stdout(Stdio::piped());
+                // `2>&1` merging into a mid-pipeline stdout isn't supported
+                // here (that stdout is the pipe, not a file) -- only a
+                // plain `2>file` redirect is honored on non-last stages.
+                self.configure_stderr(&mut cmd, &None, false, stderr, *err_append, false);
             }
-            _ => anyhow::bail!("right side of pipe must be a command"),
-        };
 
-        left_child.wait()?;
-        let status = right_child.wait()?;
-        Ok(status.code().unwrap_or(1))
+            let mut child = cmd.spawn()?;
+            prev_stdout = child.stdout.take();
+            children.push(child);
+        }
+
+        let mut last_status = 1;
+        for child in children.iter_mut() {
+            let status = child.wait()?;
+            last_status = status.code().unwrap_or(1);
+        }
+        Ok(last_status)
+    }
+
+    fn flatten_pipe<'a>(&self, node: &'a ExecNode, out: &mut Vec<&'a ExecNode>) -> anyhow::Result<()> {
+        match node {
+            ExecNode::Pipe { left, right } => {
+                self.flatten_pipe(left, out)?;
+                self.flatten_pipe(right, out)?;
+            }
+            ExecNode::Command { .. } => out.push(node),
+            _ => anyhow::bail!("pipe segments must be plain commands"),
+        }
+        Ok(())
     }
 
     // Execute command
@@ -159,41 +208,8 @@ impl Executor {
             }
         }
 
-        if let Some(file) = &stdout {
-            let f = if append {
-                OpenOptions::new().append(true).create(true).open(file)
-            } else {
-                OpenOptions::new().write(true).create(true).truncate(true).open(file)
-            };
-            if let Ok(f) = f {
-                cmd.stdout(Stdio::from(f));
-            }
-        }
-
-        // stderr redirect: 2>file / 2>>file / 2>&1
-        if stderr_to_stdout {
-            // Redirect stderr to the same destination as stdout
-            if let Some(ref out_file) = stdout {
-                let f = if append {
-                    OpenOptions::new().append(true).create(true).open(out_file)
-                } else {
-                    OpenOptions::new().write(true).create(true).truncate(true).open(out_file)
-                };
-                if let Ok(f) = f {
-                    cmd.stderr(Stdio::from(f));
-                }
-            }
-            // if stdout is not redirected, stderr naturally goes to the terminal
-        } else if let Some(ref err_file) = stderr {
-            let f = if err_append {
-                OpenOptions::new().append(true).create(true).open(err_file)
-            } else {
-                OpenOptions::new().write(true).create(true).truncate(true).open(err_file)
-            };
-            if let Ok(f) = f {
-                cmd.stderr(Stdio::from(f));
-            }
-        }
+        self.configure_stdout(&mut cmd, &stdout, append);
+        self.configure_stderr(&mut cmd, &stdout, append, &stderr, err_append, stderr_to_stdout);
 
         match cmd.status() {
             Ok(s) => Ok(s.code().unwrap_or(1)),
@@ -204,6 +220,55 @@ impl Executor {
             Err(e) => {
                 eprintln!("vsh: {program}: {e}");
                 Ok(1)
+            }
+        }
+    }
+
+    fn configure_stdout(&self, cmd: &mut Command, stdout: &Option<String>, append: bool) {
+        if let Some(file) = stdout {
+            let f = if append {
+                OpenOptions::new().append(true).create(true).open(file)
+            } else {
+                OpenOptions::new().write(true).create(true).truncate(true).open(file)
+            };
+            if let Ok(f) = f {
+                cmd.stdout(Stdio::from(f));
+            }
+        }
+    }
+
+    // stderr redirect: 2>file / 2>>file / 2>&1
+    fn configure_stderr(
+        &self,
+        cmd: &mut Command,
+        stdout: &Option<String>,
+        append: bool,
+        stderr: &Option<String>,
+        err_append: bool,
+        stderr_to_stdout: bool,
+    ) {
+        if stderr_to_stdout {
+            // Redirect stderr to the same destination as stdout; if stdout
+            // isn't redirected to a file, stderr naturally goes to the
+            // terminal same as stdout does.
+            if let Some(out_file) = stdout {
+                let f = if append {
+                    OpenOptions::new().append(true).create(true).open(out_file)
+                } else {
+                    OpenOptions::new().write(true).create(true).truncate(true).open(out_file)
+                };
+                if let Ok(f) = f {
+                    cmd.stderr(Stdio::from(f));
+                }
+            }
+        } else if let Some(err_file) = stderr {
+            let f = if err_append {
+                OpenOptions::new().append(true).create(true).open(err_file)
+            } else {
+                OpenOptions::new().write(true).create(true).truncate(true).open(err_file)
+            };
+            if let Ok(f) = f {
+                cmd.stderr(Stdio::from(f));
             }
         }
     }
@@ -259,5 +324,42 @@ impl Executor {
         }
 
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::utils::{TokenParse, Tokenize};
+
+    fn parse(input: &str) -> ExecNode {
+        let tokens = Tokenize::new(input).tokenize();
+        TokenParse::new(tokens).parse()
+    }
+
+    #[test]
+    fn flattens_a_three_stage_pipe_in_left_to_right_order() {
+        // Regression test: exec_pipe used to assume a Pipe node's `left`
+        // side was always a bare Command, so `a | b | c` (parsed as
+        // Pipe{left: Pipe{a,b}, right: c}) failed with "left side of pipe
+        // must be a command" instead of running all three stages.
+        let exec = Executor::new("", 0);
+        let root = parse("a | b | c");
+        let ExecNode::Pipe { left, right } = &root else {
+            panic!("expected a Pipe node");
+        };
+
+        let mut stages = Vec::new();
+        exec.flatten_pipe(left, &mut stages).unwrap();
+        exec.flatten_pipe(right, &mut stages).unwrap();
+
+        let programs: Vec<&str> = stages
+            .iter()
+            .map(|node| match node {
+                ExecNode::Command { program, .. } => program.as_str(),
+                _ => panic!("expected a Command node"),
+            })
+            .collect();
+        assert_eq!(programs, vec!["a", "b", "c"]);
     }
 }
