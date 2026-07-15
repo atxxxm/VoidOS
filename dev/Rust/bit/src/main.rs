@@ -31,8 +31,8 @@ impl Drop for TerminalGuard {
 }
 
 fn main() -> io::Result<()> {
-    let path = std::env::args().nth(1).map(PathBuf::from);
-    let mut app = App::new(path)?;
+    let paths: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
+    let mut app = App::new(paths)?;
 
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
