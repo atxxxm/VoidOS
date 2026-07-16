@@ -138,6 +138,15 @@ fn main() -> std::io::Result<()> {
         "# min hour mday mon wday command\n",
     )?;
 
+    // QEMU's user-mode ("slirp") networking runs a small internal DNS
+    // forwarder at 10.0.2.3 -- this only matters once libnss_dns.so.2 is
+    // present in lib64 (glibc's resolver looks it up via nsswitch.conf).
+    fs::write(rootfs.join("etc/resolv.conf"), "nameserver 10.0.2.3\n")?;
+    fs::write(
+        rootfs.join("etc/nsswitch.conf"),
+        "hosts: files dns\n",
+    )?;
+
     // init
     let init_path = base.join(INIT_PATH);
     build_crate(&init_path);

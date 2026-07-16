@@ -98,5 +98,7 @@ if (-not $BuildOnly) {
         -kernel "$TmpDir\bzImage" `
         -initrd "$TmpDir\initramfs.cpio" `
         -append "console=tty0 console=ttyS0,115200 init=/init" `
+        -netdev user,id=net0 `
+        -device e1000,netdev=net0 `
         -nographic
 }
