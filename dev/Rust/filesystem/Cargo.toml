@@ -8,6 +8,7 @@ anyhow = "1.0.100"
 chrono = "0.4.42"
 clap = { version = "4.5.53", features = ["derive"] }
 colored = "3.0.0"
+crossterm = "0.29.0"
 globset = "0.4.18"
 libc = "0.2"
 rayon = "1.11.0"
@@ -24,8 +25,16 @@ name = "chmod"
 path = "bin/chmod.rs"
 
 [[bin]]
+name = "chown"
+path = "bin/chown.rs"
+
+[[bin]]
 name = "cp"
 path = "bin/cp.rs"
+
+[[bin]]
+name = "cut"
+path = "bin/cut.rs"
 
 [[bin]]
 name = "df"
@@ -42,6 +51,10 @@ path = "bin/grep.rs"
 [[bin]]
 name = "head"
 path = "bin/head.rs"
+
+[[bin]]
+name = "less"
+path = "bin/less.rs"
 
 [[bin]]
 name = "ln"
@@ -68,12 +81,28 @@ name = "rmdir"
 path = "bin/rmdir.rs"
 
 [[bin]]
+name = "sed"
+path = "bin/sed.rs"
+
+[[bin]]
+name = "sort"
+path = "bin/sort.rs"
+
+[[bin]]
 name = "tail"
 path = "bin/tail.rs"
 
 [[bin]]
+name = "tar"
+path = "bin/tar.rs"
+
+[[bin]]
 name = "touch"
 path = "bin/touch.rs"
+
+[[bin]]
+name = "uniq"
+path = "bin/uniq.rs"
 
 [[bin]]
 name = "wc"

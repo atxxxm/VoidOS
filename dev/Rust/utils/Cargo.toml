@@ -27,8 +27,20 @@ name = "kill"
 path = "bin/kill.rs"
 
 [[bin]]
+name = "mount"
+path = "bin/mount.rs"
+
+[[bin]]
 name = "ps"
 path = "bin/ps.rs"
+
+[[bin]]
+name = "top"
+path = "bin/top.rs"
+
+[[bin]]
+name = "umount"
+path = "bin/umount.rs"
 
 [[bin]]
 name = "uname"
