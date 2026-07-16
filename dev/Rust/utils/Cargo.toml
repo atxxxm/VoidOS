@@ -51,8 +51,8 @@ name = "usereg"
 path = "bin/usereg.rs"
 
 [[bin]]
-name = "void"
-path = "bin/void.rs"
+name = "voidfetch"
+path = "bin/voidfetch.rs"
 
 [[bin]]
 name = "which"

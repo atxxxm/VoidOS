@@ -26,6 +26,7 @@ const DEMON_CONTROLLER_PATH: &str = "../dev/Rust/demon-controller";
 const DEMONS_PATH: &str = "../dev/Rust/demons";
 const VSH_PATH: &str = "../dev/Rust/vsh";
 const BIT_PATH: &str = "../dev/Rust/bit";
+const VOID_PKG_PATH: &str = "../dev/Rust/void-pkg";
 const FILESYSTEM_PATH: &str = "../dev/Rust/filesystem";
 const UTILS_PATH: &str = "../dev/Rust/utils";
 const ROOTFS_REL_PATH: &str = "../os/rootfs";
@@ -172,6 +173,11 @@ fn main() -> std::io::Result<()> {
     build_crate(&bit_path);
     copy_bin(&release_bin(&bit_path, "bit"), &rootfs.join("bin/bit"))?;
 
+    // void (package manager)
+    let void_pkg_path = base.join(VOID_PKG_PATH);
+    build_crate(&void_pkg_path);
+    copy_bin(&release_bin(&void_pkg_path, "void"), &rootfs.join("bin/void"))?;
+
     // filesystem tools (cat, cp, find, grep, ls, mkdir, mv, rm, rmdir, touch)
     let fs_path = base.join(FILESYSTEM_PATH);
     build_crate(&fs_path);
@@ -182,7 +188,7 @@ fn main() -> std::io::Result<()> {
         )?;
     }
 
-    // utils (usereg, void)
+    // utils (usereg, voidfetch, ps, kill, ...)
     let utils_path = base.join(UTILS_PATH);
     build_crate(&utils_path);
     for bin in bins_in_dir(&utils_path.join("bin")) {
