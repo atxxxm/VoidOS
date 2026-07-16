@@ -7,17 +7,20 @@ use serde::Deserialize;
 // codepage isn't UTF-8, Unicode box-drawing/block characters come out as
 // mojibake (learned the hard way with bit's editor). Plain '@' and spaces
 // survive any encoding.
-const LOGO: [&str; 10] = [
-    "    @@@@@@@@@@@@@@@@@@@@@   ",
-    "   @@@@@  @@@@@@@@  @@@@@@   ",
-    "  @@@@@@  @@@@@@@@  @@@@@@@  ",
-    " @@@@@@@@  @@@@@@  @@@@@@@@@ ",
-    " @@@@@@@@@  @@@@  @@@@@@@@@@ ",
-    " @@@@@@@@@  @@@@  @@@@@@@@@@ ",
-    " @@@@@@@@@@  @@  @@@@@@@@@@ ",
-    "  @@@@@@@@@@    @@@@@@@@@@ ",
-    "   @@@@@@@@@@   @@@@@@@@@ ",
-    "    @@@@@@@@@@@@@@@@@@@@ ",
+// A hollow ring: the empty center is the "void" itself, framed by the
+// band -- fits the name rather than being art for its own sake.
+const LOGO: [&str; 11] = [
+    "        @@@@@@@        ",
+    "     @@@@@@@@@@@@@     ",
+    "   @@@@@@     @@@@@@   ",
+    "  @@@@@         @@@@@  ",
+    " @@@@@           @@@@@ ",
+    "@@@@@             @@@@@",
+    " @@@@@           @@@@@ ",
+    "  @@@@@         @@@@@  ",
+    "   @@@@@@     @@@@@@   ",
+    "     @@@@@@@@@@@@@     ",
+    "        @@@@@@@        ",
 ];
 
 const LABEL_WIDTH: usize = 9;
